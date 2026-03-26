@@ -1,6 +1,32 @@
 import { useState, useEffect, useRef } from 'react'
 import './GardenLayout.css'
 
+// ─── crop categories (mirrors PlantingList) ──────────────────────────────────
+
+const CROP_CATS = [
+  { id: 'vegetables', emoji: '🥦', color: '#16a34a', light: '#f0fdf4' },
+  { id: 'fruits',     emoji: '🍓', color: '#dc2626', light: '#fef2f2' },
+  { id: 'herbs',      emoji: '🌿', color: '#059669', light: '#ecfdf5' },
+  { id: 'roots',      emoji: '🥕', color: '#d97706', light: '#fffbeb' },
+  { id: 'flowers',    emoji: '🌸', color: '#db2777', light: '#fdf2f8' },
+  { id: 'other',      emoji: '🌱', color: '#6b7280', light: '#f9fafb' },
+]
+const CROP_CAT_BY_ID = Object.fromEntries(CROP_CATS.map(c => [c.id, c]))
+const CROP_KW = {
+  fruits:     ['tomato','pepper','capsicum','tomatillo','strawberry','raspberry','blueberry','blackberry','gooseberry','currant','grape','melon','watermelon','cantaloupe','honeydew','passionfruit','kiwi','fig'],
+  herbs:      ['basil','parsley','cilantro','coriander','dill','mint','thyme','rosemary','sage','oregano','marjoram','tarragon','chervil','borage','stevia','lemon balm','lemongrass','bay','sorrel','lovage','fennel','anise','caraway','chive'],
+  roots:      ['carrot','beet','beetroot','radish','turnip','parsnip','potato','sweet potato','rutabaga','swede','kohlrabi','daikon','yam','horseradish','celeriac','salsify','ginger','turmeric'],
+  flowers:    ['sunflower','marigold','nasturtium','zinnia','dahlia','cosmos','calendula','pansy','petunia','rose','lavender','chamomile','chrysanthemum','echinacea','delphinium','snapdragon','poppy','cornflower','foxglove'],
+  vegetables: ['lettuce','spinach','kale','chard','arugula','rocket','cabbage','broccoli','cauliflower','brussels','bok choy','pak choi','collard','mustard','endive','radicchio','celery','asparagus','artichoke','onion','garlic','shallot','leek','scallion','ramp','watercress','cucumber','zucchini','courgette','squash','pumpkin','eggplant','aubergine','okra','corn','maize','bean','pea'],
+}
+function getCropCat(crop) {
+  const lower = crop.toLowerCase()
+  for (const [id, kws] of Object.entries(CROP_KW)) {
+    if (kws.some(kw => lower.includes(kw))) return CROP_CAT_BY_ID[id]
+  }
+  return CROP_CAT_BY_ID.other
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const PALETTE = [
@@ -588,22 +614,36 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 ✕ Eraser
               </button>
 
-              {savedCrops.length > 0 && (
-                <>
-                  <div className="palette-group-label">Saved plantings</div>
-                  {savedCrops.map(crop => (
-                    <button
-                      key={crop}
-                      className={`palette-chip ${selectedCrop === crop ? 'active' : ''}`}
-                      style={{ '--chip-color': cropColor(crop) }}
-                      onClick={() => setSelectedCrop(prev => prev === crop ? null : crop)}
-                    >
-                      <span className="chip-dot" />
-                      {crop}
-                    </button>
-                  ))}
-                </>
-              )}
+              {/* Compact planting cards */}
+              {(() => {
+                const seen = new Set()
+                const unique = plantings.filter(p => { if (seen.has(p.crop)) return false; seen.add(p.crop); return true })
+                if (!unique.length) return null
+                return (
+                  <>
+                    <div className="palette-group-label">Saved plantings</div>
+                    {unique.map(p => {
+                      const cat = getCropCat(p.crop)
+                      const active = selectedCrop === p.crop
+                      return (
+                        <button
+                          key={p.crop}
+                          className={`palette-card${active ? ' palette-card--active' : ''}`}
+                          style={{ '--cat-color': cat.color, '--cat-light': cat.light }}
+                          onClick={() => setSelectedCrop(prev => prev === p.crop ? null : p.crop)}
+                        >
+                          <span className="palette-card-emoji">{cat.emoji}</span>
+                          <div className="palette-card-body">
+                            <span className="palette-card-name">{p.crop}</span>
+                            {p.harvest && <span className="palette-card-meta">🌾 {p.harvest}</span>}
+                          </div>
+                          {active && <span className="palette-card-check">✓</span>}
+                        </button>
+                      )
+                    })}
+                  </>
+                )
+              })()}
 
               <div className="palette-group-label">Custom</div>
               <div className="palette-custom-row">
@@ -615,16 +655,22 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 />
                 <button className="btn-ghost btn-sm" onClick={() => { if (customCrop.trim()) { setSelectedCrop(customCrop.trim()); setCustomCrop('') } }}>Use</button>
               </div>
-              {selectedCrop && !savedCrops.includes(selectedCrop) && (
-                <button
-                  className="palette-chip active"
-                  style={{ '--chip-color': cropColor(selectedCrop) }}
-                  onClick={() => setSelectedCrop(null)}
-                >
-                  <span className="chip-dot" />
-                  {selectedCrop}
-                </button>
-              )}
+              {selectedCrop && !savedCrops.includes(selectedCrop) && (() => {
+                const cat = getCropCat(selectedCrop)
+                return (
+                  <button
+                    className="palette-card palette-card--active"
+                    style={{ '--cat-color': cat.color, '--cat-light': cat.light }}
+                    onClick={() => setSelectedCrop(null)}
+                  >
+                    <span className="palette-card-emoji">{cat.emoji}</span>
+                    <div className="palette-card-body">
+                      <span className="palette-card-name">{selectedCrop}</span>
+                      <span className="palette-card-meta">Custom · click to deselect</span>
+                    </div>
+                  </button>
+                )
+              })()}
             </div>
 
             {/* Grid */}

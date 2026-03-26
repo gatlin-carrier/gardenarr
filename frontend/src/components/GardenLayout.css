@@ -346,7 +346,7 @@
 /* ── Crop palette ───────────────────────────────────────────────── */
 
 .crop-palette {
-  width: 155px;
+  width: 185px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -422,6 +422,70 @@
 
 .palette-custom-row { display: flex; gap: 6px; }
 .palette-custom-row input { font-size: 12px; padding: 6px 8px; }
+
+/* ── Compact planting cards in palette ──────────────────────────── */
+
+.palette-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--cat-color, var(--green-400));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.palette-card:hover {
+  background: var(--cat-light, var(--green-50));
+  border-color: var(--cat-color, var(--green-400));
+}
+.palette-card--active {
+  background: var(--cat-light, var(--green-50));
+  border-color: var(--cat-color, var(--green-400));
+  box-shadow: 0 0 0 1px var(--cat-color, var(--green-400));
+}
+
+.palette-card-emoji {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.palette-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.palette-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-card-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-card-check {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cat-color, var(--green-600));
+  flex-shrink: 0;
+}
 
 /* ── Grid area ──────────────────────────────────────────────────── */
 
@@ -543,7 +607,8 @@
   :root { --cell-size: 36px; }
   .canvas-toolbar { flex-direction: column; align-items: flex-start; }
   .paint-workspace { flex-direction: column; }
-  .crop-palette { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .crop-palette { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
   .palette-section-label, .palette-group-label { display: none; }
-  .palette-chip { width: auto; }
+  .palette-card { width: auto; flex: 0 1 auto; }
+  .palette-custom-row { width: 100%; }
 }
