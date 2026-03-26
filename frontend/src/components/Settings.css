@@ -162,6 +162,16 @@
   flex-shrink: 0;
 }
 
+.llm-test-result {
+  font-size: 11px;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.llm-test-result--testing { color: var(--text-muted); }
+.llm-test-result--ok      { color: #16a34a; }
+.llm-test-result--error   { color: #c0392b; }
+
 .btn-sm {
   font-size: 12px;
   padding: 3px 9px;

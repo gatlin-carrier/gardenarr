@@ -53,6 +53,7 @@ export default function Settings({ onClose }) {
   const [saving, setSaving] = useState(false)
   const [routingSaving, setRoutingSaving] = useState(false)
   const [routingSaved, setRoutingSaved] = useState(false)
+  const [testStatus, setTestStatus] = useState({})     // { [id]: 'testing'|'ok'|'error', message? }
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -162,6 +163,20 @@ export default function Settings({ onClose }) {
     await loadConfigs()
   }
 
+  async function testConfig(id) {
+    setTestStatus(s => ({ ...s, [id]: { state: 'testing' } }))
+    try {
+      const data = await fetch(`/api/llm-configs/${id}/test`, { method: 'POST' }).then(r => r.json())
+      if (data.ok) {
+        setTestStatus(s => ({ ...s, [id]: { state: 'ok', message: data.response } }))
+      } else {
+        setTestStatus(s => ({ ...s, [id]: { state: 'error', message: data.error } }))
+      }
+    } catch (e) {
+      setTestStatus(s => ({ ...s, [id]: { state: 'error', message: e.message } }))
+    }
+  }
+
   async function deleteConfig(id) {
     if (!window.confirm('Remove this LLM configuration?')) return
     await fetch(`/api/llm-configs/${id}`, { method: 'DELETE' })
@@ -241,8 +256,22 @@ export default function Settings({ onClose }) {
                         {cfg.api_key_hint && <span className="llm-row-key">{cfg.api_key_hint}</span>}
                         {cfg.base_url && <span className="llm-row-url">{cfg.base_url}</span>}
                       </div>
+                      {testStatus[cfg.id] && (
+                        <div className={`llm-test-result llm-test-result--${testStatus[cfg.id].state}`}>
+                          {testStatus[cfg.id].state === 'testing' && '⏳ Testing…'}
+                          {testStatus[cfg.id].state === 'ok'      && `✓ Connected — "${testStatus[cfg.id].message}"`}
+                          {testStatus[cfg.id].state === 'error'   && `✗ ${testStatus[cfg.id].message}`}
+                        </div>
+                      )}
                     </div>
                     <div className="llm-row-actions">
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() => testConfig(cfg.id)}
+                        disabled={editingId !== null || testStatus[cfg.id]?.state === 'testing'}
+                      >
+                        {testStatus[cfg.id]?.state === 'testing' ? '…' : 'Test'}
+                      </button>
                       <button className="btn-ghost btn-sm" onClick={() => startEdit(cfg)} disabled={editingId !== null}>Edit</button>
                       <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteConfig(cfg.id)} disabled={editingId !== null}>Remove</button>
                     </div>

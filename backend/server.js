@@ -266,6 +266,27 @@ app.put('/api/llm-configs/:id', (req, res) => {
   res.json(serializeConfig(updated));
 });
 
+app.post('/api/llm-configs/:id/test', async (req, res) => {
+  const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(req.params.id);
+  if (!cfg) return res.status(404).json({ error: 'Not found' });
+
+  let apiKey = cfg.api_key || null;
+  if (!apiKey) {
+    if (cfg.provider === 'anthropic') apiKey = process.env.ANTHROPIC_API_KEY || null;
+    else if (cfg.provider === 'openai')  apiKey = process.env.OPENAI_API_KEY  || null;
+    else if (cfg.provider === 'google')  apiKey = process.env.GOOGLE_API_KEY  || null;
+  }
+
+  const settings = { provider: cfg.provider, model: cfg.model || null, api_key: apiKey, ollama_base_url: cfg.base_url || null };
+
+  try {
+    const reply = await chat('Reply with exactly one word: OK', settings, { maxTokens: 16 });
+    res.json({ ok: true, response: reply.trim() });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/llm-configs/:id/activate', (req, res) => {
   const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(req.params.id);
   if (!cfg) return res.status(404).json({ error: 'Not found' });
