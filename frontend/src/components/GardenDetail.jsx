@@ -37,6 +37,17 @@ export default function GardenDetail({ garden }) {
     setPlantings(prev => prev.map(p => p.id === id ? { ...p, ...data } : p))
   }
 
+  async function addPlanting(data) {
+    const res = await fetch(`/api/gardens/${garden.id}/plantings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    const { id } = await res.json()
+    setPlantings(prev => [{ id, garden_id: garden.id, ...data, created_at: new Date().toISOString(),
+      status_planted: 0, status_transplanted: 0, status_harvested: 0, status_skipped: 0 }, ...prev])
+  }
+
   async function deletePlanting(id) {
     await fetch(`/api/plantings/${id}`, { method: 'DELETE' })
     setPlantings(prev => prev.filter(p => p.id !== id))
@@ -86,7 +97,7 @@ export default function GardenDetail({ garden }) {
       )}
 
       {activeTab === 'saved' && (
-        <PlantingList plantings={plantings} onUpdate={updatePlanting} onDelete={deletePlanting} />
+        <PlantingList plantings={plantings} onUpdate={updatePlanting} onDelete={deletePlanting} onAdd={addPlanting} />
       )}
     </div>
   )

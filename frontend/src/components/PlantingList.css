@@ -217,6 +217,72 @@
   margin-top: 2px;
 }
 
+/* ── Add plant bar ─────────────────────────────────────────────── */
+
+.pl-add-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.add-form-card {
+  border-left-color: var(--green-400);
+}
+
+/* ── Status checkboxes ─────────────────────────────────────────── */
+
+.pc-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 2px;
+}
+
+.pc-status-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.pc-status-check input[type="checkbox"] {
+  accent-color: var(--green-600);
+  margin: 0;
+  cursor: pointer;
+}
+
+.pc-status-check:hover {
+  border-color: var(--green-400);
+  background: var(--green-50);
+}
+
+.pc-status-check.checked {
+  background: var(--green-50);
+  border-color: var(--green-400);
+  color: var(--green-800);
+}
+
+.pc-status-check.skipped.checked {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.pc-status-check.skipped:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.pc-status-check.skipped input[type="checkbox"] {
+  accent-color: #dc2626;
+}
+
 /* ── Tip & notes ────────────────────────────────────────────────── */
 
 .pc-tip {

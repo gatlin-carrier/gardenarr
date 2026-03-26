@@ -129,11 +129,13 @@ function InfoList({ label, items }) {
 
 // ─── PlantingList ─────────────────────────────────────────────────────────────
 
-export default function PlantingList({ plantings, onUpdate, onDelete }) {
+export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
   const [editingId, setEditingId] = useState(null)
   const [draft, setDraft]         = useState({})
   const [saving, setSaving]       = useState(false)
   const [activeCategory, setActiveCategory] = useState(null)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [addDraft, setAddDraft]   = useState({ crop: '', sow_indoors: '', transplant_or_direct_sow: '', harvest: '', tip: '', notes: '' })
 
   // Build category counts from full list
   const categoryCounts = {}
@@ -161,6 +163,28 @@ export default function PlantingList({ plantings, onUpdate, onDelete }) {
 
   function cancelEdit() { setEditingId(null); setDraft({}) }
 
+  async function toggleStatus(p, field) {
+    const updated = { status_planted: p.status_planted || 0, status_transplanted: p.status_transplanted || 0,
+                      status_harvested: p.status_harvested || 0, status_skipped: p.status_skipped || 0 }
+    // If toggling "skipped" on, turn off the others; if toggling a progress field on, turn off skipped
+    if (field === 'status_skipped') {
+      if (!updated.status_skipped) {
+        updated.status_planted = 0; updated.status_transplanted = 0; updated.status_harvested = 0
+      }
+    } else if (updated.status_skipped) {
+      updated.status_skipped = 0
+    }
+    updated[field] = updated[field] ? 0 : 1
+    await onUpdate(p.id, updated)
+  }
+
+  async function submitAdd() {
+    if (!addDraft.crop.trim()) return
+    await onAdd(addDraft)
+    setAddDraft({ crop: '', sow_indoors: '', transplant_or_direct_sow: '', harvest: '', tip: '', notes: '' })
+    setShowAddForm(false)
+  }
+
   async function commitEdit(id) {
     setSaving(true)
     await onUpdate(id, { ...draft, sow_indoors: draft.sow_indoors || null })
@@ -169,16 +193,61 @@ export default function PlantingList({ plantings, onUpdate, onDelete }) {
     setDraft({})
   }
 
+  const addFormJsx = showAddForm && (
+    <div className="planting-card editing add-form-card">
+      <div className="edit-field">
+        <label>Crop name</label>
+        <input value={addDraft.crop} onChange={e => setAddDraft(d => ({ ...d, crop: e.target.value }))} placeholder="e.g. Tomatoes" autoFocus />
+      </div>
+      <div className="edit-row">
+        <div className="edit-field">
+          <label>Sow indoors</label>
+          <input placeholder="e.g. Feb-Mar" value={addDraft.sow_indoors} onChange={e => setAddDraft(d => ({ ...d, sow_indoors: e.target.value }))} />
+        </div>
+        <div className="edit-field">
+          <label>Transplant / Direct sow</label>
+          <input placeholder="e.g. May" value={addDraft.transplant_or_direct_sow} onChange={e => setAddDraft(d => ({ ...d, transplant_or_direct_sow: e.target.value }))} />
+        </div>
+        <div className="edit-field">
+          <label>Harvest</label>
+          <input placeholder="e.g. Jul-Sep" value={addDraft.harvest} onChange={e => setAddDraft(d => ({ ...d, harvest: e.target.value }))} />
+        </div>
+      </div>
+      <div className="edit-field">
+        <label>Tip</label>
+        <input value={addDraft.tip} onChange={e => setAddDraft(d => ({ ...d, tip: e.target.value }))} />
+      </div>
+      <div className="edit-field">
+        <label>Notes</label>
+        <textarea rows={2} value={addDraft.notes} onChange={e => setAddDraft(d => ({ ...d, notes: e.target.value }))} />
+      </div>
+      <div className="edit-actions">
+        <button className="btn-primary" onClick={submitAdd} disabled={!addDraft.crop.trim()}>Add plant</button>
+        <button className="btn-ghost" onClick={() => setShowAddForm(false)}>Cancel</button>
+      </div>
+    </div>
+  )
+
   if (!plantings.length) return (
     <div className="no-plantings">
       <div className="no-plantings-icon">🌱</div>
       <p>No saved plantings yet.</p>
-      <p className="no-plantings-sub">Generate a schedule and save crops to see them here.</p>
+      <p className="no-plantings-sub">Generate a schedule and save crops to see them here, or add one manually.</p>
+      <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => setShowAddForm(true)}>+ Add plant</button>
+      {addFormJsx}
     </div>
   )
 
   return (
     <div className="planting-list">
+
+      {/* Add plant button */}
+      <div className="pl-add-bar">
+        <button className="btn-primary btn-sm" onClick={() => setShowAddForm(s => !s)}>
+          {showAddForm ? 'Cancel' : '+ Add plant'}
+        </button>
+      </div>
+      {addFormJsx}
 
       {/* Category filter bar */}
       {presentCategories.length > 1 && (
@@ -295,6 +364,28 @@ export default function PlantingList({ plantings, onUpdate, onDelete }) {
                     <span className="pc-tl-date">{p.harvest}</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Status checkboxes */}
+              <div className="pc-status">
+                {p.sow_indoors && (
+                  <label className={`pc-status-check ${p.status_planted ? 'checked' : ''}`}>
+                    <input type="checkbox" checked={!!p.status_planted} onChange={() => toggleStatus(p, 'status_planted')} />
+                    <span>Planted</span>
+                  </label>
+                )}
+                <label className={`pc-status-check ${p.status_transplanted ? 'checked' : ''}`}>
+                  <input type="checkbox" checked={!!p.status_transplanted} onChange={() => toggleStatus(p, 'status_transplanted')} />
+                  <span>{p.sow_indoors ? 'Transplanted' : 'Planted'}</span>
+                </label>
+                <label className={`pc-status-check ${p.status_harvested ? 'checked' : ''}`}>
+                  <input type="checkbox" checked={!!p.status_harvested} onChange={() => toggleStatus(p, 'status_harvested')} />
+                  <span>Harvested</span>
+                </label>
+                <label className={`pc-status-check skipped ${p.status_skipped ? 'checked' : ''}`}>
+                  <input type="checkbox" checked={!!p.status_skipped} onChange={() => toggleStatus(p, 'status_skipped')} />
+                  <span>Not this season</span>
+                </label>
               </div>
 
               {/* Tip */}

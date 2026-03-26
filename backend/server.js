@@ -126,6 +126,10 @@ const migrations = [
   'ALTER TABLE beds ADD COLUMN y_ft REAL DEFAULT 0',
   'ALTER TABLE gardens ADD COLUMN is_default INTEGER DEFAULT 0',
   'ALTER TABLE gardens ADD COLUMN sort_order INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_planted INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_transplanted INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_harvested INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_skipped INTEGER DEFAULT 0',
 ];
 for (const sql of migrations) {
   try { db.prepare(sql).run(); } catch {} // column already exists → silent no-op
@@ -638,10 +642,19 @@ app.post('/api/gardens/:id/plantings', (req, res) => {
 });
 
 app.put('/api/plantings/:id', (req, res) => {
-  const { crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes } = req.body;
+  const { crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes,
+          status_planted, status_transplanted, status_harvested, status_skipped } = req.body;
+  // If only status fields are being updated (partial update)
+  if (crop === undefined && status_planted !== undefined) {
+    db.prepare(
+      'UPDATE plantings SET status_planted=?, status_transplanted=?, status_harvested=?, status_skipped=? WHERE id=?'
+    ).run(status_planted ? 1 : 0, status_transplanted ? 1 : 0, status_harvested ? 1 : 0, status_skipped ? 1 : 0, req.params.id);
+    return res.json({ ok: true });
+  }
   db.prepare(
-    'UPDATE plantings SET crop=?, sow_indoors=?, transplant_or_direct_sow=?, harvest=?, tip=?, notes=? WHERE id=?'
-  ).run(crop, sow_indoors || null, transplant_or_direct_sow, harvest, tip, notes || '', req.params.id);
+    'UPDATE plantings SET crop=?, sow_indoors=?, transplant_or_direct_sow=?, harvest=?, tip=?, notes=?, status_planted=?, status_transplanted=?, status_harvested=?, status_skipped=? WHERE id=?'
+  ).run(crop, sow_indoors || null, transplant_or_direct_sow, harvest, tip, notes || '',
+        status_planted ? 1 : 0, status_transplanted ? 1 : 0, status_harvested ? 1 : 0, status_skipped ? 1 : 0, req.params.id);
   res.json({ ok: true });
 });
 
