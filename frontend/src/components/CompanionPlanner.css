@@ -2,6 +2,17 @@
 
 .companion-intro p { font-size: 14px; color: var(--text-muted); line-height: 1.6; }
 
+.saved-preloaded-notice {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--green-800);
+  background: var(--green-50);
+  border: 1px solid var(--green-100);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  display: inline-block;
+}
+
 .cp-crop-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .crop-chip {
@@ -16,6 +27,10 @@
 }
 .crop-chip:hover { border-color: var(--green-400); color: var(--green-800); background: var(--green-50); }
 .crop-chip.selected { background: var(--green-600); border-color: var(--green-600); color: white; }
+.crop-chip.selected.saved { background: var(--green-800); border-color: var(--green-800); }
+
+.cp-saved-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cp-saved-extras-label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .custom-crop-row { display: flex; gap: 8px; }
 .custom-crop-row input { flex: 1; }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './CompanionPlanner.css'
 
 const ALL_CROPS = [
@@ -10,12 +10,24 @@ const ALL_CROPS = [
   'Corn','Pumpkins','Watermelon','Potatoes','Sunflowers','Nasturtiums'
 ]
 
-export default function CompanionPlanner() {
+export default function CompanionPlanner({ savedPlantings = [] }) {
   const [selected, setSelected] = useState(new Set())
   const [customCrop, setCustomCrop] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // Pre-select saved plantings when the component mounts or saved plantings change
+  useEffect(() => {
+    if (!savedPlantings.length) return
+    setSelected(prev => {
+      const next = new Set(prev)
+      for (const p of savedPlantings) next.add(p.crop)
+      return next
+    })
+  }, [savedPlantings])
+
+  const savedCropNames = new Set(savedPlantings.map(p => p.crop))
 
   function toggleCrop(crop) {
     setSelected(prev => {
@@ -60,19 +72,40 @@ export default function CompanionPlanner() {
     <div className="companion-planner">
       <div className="companion-intro">
         <p>Select the crops you're planning to grow and get AI-powered advice on what to plant together, what to keep apart, and how to organize your beds.</p>
+        {savedPlantings.length > 0 && (
+          <div className="saved-preloaded-notice">
+            {savedPlantings.length} saved planting{savedPlantings.length !== 1 ? 's' : ''} pre-selected below.
+          </div>
+        )}
       </div>
 
       <div className="cp-crop-grid">
         {ALL_CROPS.map(crop => (
           <button
             key={crop}
-            className={`crop-chip ${selected.has(crop) ? 'selected' : ''}`}
+            className={`crop-chip ${selected.has(crop) ? 'selected' : ''} ${savedCropNames.has(crop) && selected.has(crop) ? 'saved' : ''}`}
             onClick={() => toggleCrop(crop)}
           >
             {crop}
           </button>
         ))}
       </div>
+
+      {/* Saved crops that aren't in the standard list */}
+      {savedPlantings.filter(p => !ALL_CROPS.includes(p.crop)).length > 0 && (
+        <div className="cp-saved-extras">
+          <span className="cp-saved-extras-label">From your garden:</span>
+          {savedPlantings.filter(p => !ALL_CROPS.includes(p.crop)).map(p => (
+            <button
+              key={p.crop}
+              className={`crop-chip ${selected.has(p.crop) ? 'selected saved' : ''}`}
+              onClick={() => toggleCrop(p.crop)}
+            >
+              {p.crop}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="custom-crop-row">
         <input

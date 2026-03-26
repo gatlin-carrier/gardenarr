@@ -19,10 +19,11 @@ export default function CropScheduler({ garden, onSave }) {
     } catch { return new Set() }
   })
   const [schedule, setSchedule] = useState([])
+  const [generatedFor, setGeneratedFor] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [customCrop, setCustomCrop] = useState('')
-  const [saved, setSaved] = useState(false)
+  const [savedCrops, setSavedCrops] = useState(new Set())
 
   useEffect(() => {
     try {
@@ -36,8 +37,6 @@ export default function CropScheduler({ garden, onSave }) {
       next.has(crop) ? next.delete(crop) : next.add(crop)
       return next
     })
-    setSchedule([])
-    setSaved(false)
   }
 
   function addCustom() {
@@ -54,7 +53,7 @@ export default function CropScheduler({ garden, onSave }) {
     setLoading(true)
     setError('')
     setSchedule([])
-    setSaved(false)
+    setSavedCrops(new Set())
 
     try {
       const res = await fetch('/api/schedule', {
@@ -65,6 +64,7 @@ export default function CropScheduler({ garden, onSave }) {
       const data = await res.json()
       if (data.error) { setError(data.error); return }
       setSchedule(data.crops || [])
+      setGeneratedFor(new Set(selected))
     } catch(e) {
       setError('Failed to generate schedule. Is the backend running?')
     } finally {
@@ -72,15 +72,20 @@ export default function CropScheduler({ garden, onSave }) {
     }
   }
 
+  function cropToPlanting(c) {
+    return { crop: c.name, sow_indoors: c.sow_indoors || null, transplant_or_direct_sow: c.transplant_or_direct_sow, harvest: c.harvest, tip: c.tip }
+  }
+
   async function saveAll() {
-    await onSave(schedule.map(c => ({
-      crop: c.name,
-      sow_indoors: c.sow_indoors || null,
-      transplant_or_direct_sow: c.transplant_or_direct_sow,
-      harvest: c.harvest,
-      tip: c.tip
-    })))
-    setSaved(true)
+    const unsaved = schedule.filter(c => !savedCrops.has(c.name))
+    if (!unsaved.length) return
+    await onSave(unsaved.map(cropToPlanting))
+    setSavedCrops(new Set(schedule.map(c => c.name)))
+  }
+
+  async function saveSingle(crop) {
+    await onSave([cropToPlanting(crop)])
+    setSavedCrops(prev => new Set([...prev, crop.name]))
   }
 
   return (
@@ -136,34 +141,53 @@ export default function CropScheduler({ garden, onSave }) {
 
       {schedule.length > 0 && (
         <div className="schedule-results">
+          {generatedFor && (selected.size !== generatedFor.size || [...selected].some(c => !generatedFor.has(c))) && (
+            <div className="stale-notice">Selection changed — re-generate to update results.</div>
+          )}
           <div className="schedule-results-header">
             <h3>Planting schedule</h3>
-            <button className={`btn-primary save-btn ${saved ? 'saved' : ''}`} onClick={saveAll} disabled={saved}>
-              {saved ? 'Saved!' : 'Save all to garden'}
+            <button
+              className={`btn-primary save-btn ${savedCrops.size === schedule.length ? 'saved' : ''}`}
+              onClick={saveAll}
+              disabled={savedCrops.size === schedule.length}
+            >
+              {savedCrops.size === schedule.length ? 'All saved!' : `Save ${schedule.length - savedCrops.size} remaining`}
             </button>
           </div>
-          {schedule.map((crop, i) => (
-            <div key={i} className="schedule-card">
-              <div className="schedule-crop-name">{crop.name}</div>
-              <div className="timeline">
-                {crop.sow_indoors && (
+          {schedule.map((crop, i) => {
+            const isSaved = savedCrops.has(crop.name)
+            return (
+              <div key={i} className="schedule-card">
+                <div className="schedule-card-header">
+                  <div className="schedule-crop-name">{crop.name}</div>
+                  <button
+                    className={`btn-ghost save-single-btn ${isSaved ? 'saved' : ''}`}
+                    onClick={() => saveSingle(crop)}
+                    disabled={isSaved}
+                  >
+                    {isSaved ? 'Saved' : 'Save'}
+                  </button>
+                </div>
+                <div className="timeline">
+                  {crop.sow_indoors && (
+                    <div className="timeline-row">
+                      <div className="tl-label">Sow indoors</div>
+                      <div className="tl-bar sow">{crop.sow_indoors}</div>
+                    </div>
+                  )}
                   <div className="timeline-row">
-                    <div className="tl-label">Sow indoors</div>
-                    <div className="tl-bar sow">{crop.sow_indoors}</div>
+                    <div className="tl-label">{crop.sow_indoors ? 'Transplant' : 'Direct sow'}</div>
+                    <div className="tl-bar transplant">{crop.transplant_or_direct_sow}</div>
                   </div>
-                )}
-                <div className="timeline-row">
-                  <div className="tl-label">{crop.sow_indoors ? 'Transplant' : 'Direct sow'}</div>
-                  <div className="tl-bar transplant">{crop.transplant_or_direct_sow}</div>
+                  <div className="timeline-row">
+                    <div className="tl-label">Harvest</div>
+                    <div className="tl-bar harvest">{crop.harvest}</div>
+                  </div>
                 </div>
-                <div className="timeline-row">
-                  <div className="tl-label">Harvest</div>
-                  <div className="tl-bar harvest">{crop.harvest}</div>
-                </div>
+                {crop.tip && <div className="crop-tip">{crop.tip}</div>}
               </div>
-              {crop.tip && <div className="crop-tip">{crop.tip}</div>}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

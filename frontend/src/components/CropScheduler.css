@@ -83,3 +83,11 @@
 .tl-bar.harvest { background: var(--teal-100); color: var(--teal-600); }
 
 .crop-tip { margin-top: 10px; padding: 8px 12px; background: var(--bg); border-left: 3px solid var(--green-400); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+.stale-notice { padding: 8px 12px; background: var(--amber-100); color: var(--amber-600); border-radius: var(--radius-sm); font-size: 13px; }
+
+.schedule-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.schedule-card-header .schedule-crop-name { margin-bottom: 0; }
+
+.save-single-btn { font-size: 12px; padding: 4px 12px; }
+.save-single-btn.saved { color: var(--text-muted); cursor: default; }

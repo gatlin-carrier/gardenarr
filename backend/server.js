@@ -1,17 +1,40 @@
 const express = require('express');
 const cors = require('cors');
-const Anthropic = require('@anthropic-ai/sdk');
+const multer = require('multer');
+const webpush = require('web-push');
+const cron = require('node-cron');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { chat } = require('./llm');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const DB_PATH = process.env.DB_PATH || './data/garden.db';
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const DATA_DIR = path.resolve(path.dirname(DB_PATH));
+const IMAGES_DIR = path.join(DATA_DIR, 'images');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(IMAGES_DIR, { recursive: true });
 const db = new Database(DB_PATH);
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, IMAGES_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are accepted'));
+  },
+});
+
+app.use('/uploads', express.static(IMAGES_DIR));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS gardens (
@@ -40,22 +63,158 @@ db.exec(`
     notes TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS plant_info_cache (
+    crop TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    cached_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS journal_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    planting_id INTEGER REFERENCES plantings(id),
+    note TEXT,
+    label TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS journal_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_entry_id INTEGER REFERENCES journal_entries(id),
+    filename TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    endpoint TEXT UNIQUE NOT NULL,
+    subscription TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// ---------------------------------------------------------------------------
+// VAPID / web-push setup  (keys generated once, persisted in settings table)
+// ---------------------------------------------------------------------------
+
+function getOrCreateVapidKeys() {
+  const pub  = db.prepare("SELECT value FROM settings WHERE key='vapid_public'").get();
+  const priv = db.prepare("SELECT value FROM settings WHERE key='vapid_private'").get();
+  if (pub && priv) return { publicKey: pub.value, privateKey: priv.value };
+
+  const keys = webpush.generateVAPIDKeys();
+  const set = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  set.run('vapid_public',  keys.publicKey);
+  set.run('vapid_private', keys.privateKey);
+  console.log('Generated new VAPID keys');
+  return keys;
+}
+
+const vapidKeys = getOrCreateVapidKeys();
+webpush.setVapidDetails(
+  'mailto:gardenarr@localhost',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
+
+// ---------------------------------------------------------------------------
+// LLM settings helpers
+// ---------------------------------------------------------------------------
+
+function getLLMSettings() {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const s = {};
+  for (const r of rows) s[r.key] = r.value;
+
+  const provider = s.provider || 'anthropic';
+
+  // Fall back to environment variables when no key has been configured via UI
+  let apiKey = s.api_key || null;
+  if (!apiKey) {
+    if (provider === 'anthropic') apiKey = process.env.ANTHROPIC_API_KEY || null;
+    else if (provider === 'openai')  apiKey = process.env.OPENAI_API_KEY  || null;
+    else if (provider === 'google')  apiKey = process.env.GOOGLE_API_KEY  || null;
+    // ollama needs no key
+  }
+
+  return {
+    provider,
+    model: s.model || null,
+    api_key: apiKey,
+    ollama_base_url: s.ollama_base_url || null,
+  };
+}
+
+function maskKey(key) {
+  if (!key) return null;
+  if (key.length <= 8) return '****';
+  return key.slice(0, 7) + '****';
+}
+
+// ---------------------------------------------------------------------------
+// Settings API  (keys are NEVER returned in full — only masked hints)
+// ---------------------------------------------------------------------------
+
+app.get('/api/settings', (req, res) => {
+  const s = getLLMSettings();
+  res.json({
+    provider: s.provider,
+    model: s.model || '',
+    api_key_hint: maskKey(s.api_key),
+    ollama_base_url: s.ollama_base_url || '',
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const { provider, model, api_key, ollama_base_url } = req.body;
+  const set = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+
+  if (provider !== undefined) set.run('provider', provider);
+  if (model !== undefined)    set.run('model', model || '');
+  // Only update the stored key if the client sent a non-empty value
+  if (api_key)                set.run('api_key', api_key);
+  if (ollama_base_url !== undefined) set.run('ollama_base_url', ollama_base_url || '');
+
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Push notification endpoints
+// ---------------------------------------------------------------------------
+
+app.get('/api/push/public-key', (_req, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+app.post('/api/push/subscribe', (req, res) => {
+  const sub = req.body;
+  if (!sub?.endpoint) return res.status(400).json({ error: 'Invalid subscription' });
+  db.prepare(
+    'INSERT OR REPLACE INTO push_subscriptions (endpoint, subscription) VALUES (?, ?)'
+  ).run(sub.endpoint, JSON.stringify(sub));
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', (req, res) => {
+  const { endpoint } = req.body;
+  if (endpoint) db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// AI endpoints
+// ---------------------------------------------------------------------------
 
 async function scheduleForCrops(location, crops) {
-  const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    messages: [{
-      role: 'user',
-      content: `You are a gardening expert. For ${location}, give a planting schedule for: ${crops.join(', ')}.
+  const settings = getLLMSettings();
+  const text = await chat(
+    `You are a gardening expert. For ${location}, give a planting schedule for: ${crops.join(', ')}.
 Reply ONLY with valid JSON, no markdown, no extra text:
-{"crops":[{"name":"string","sow_indoors":"string or null","transplant_or_direct_sow":"string","harvest":"string","tip":"string"}]}`
-    }]
-  });
-  const raw = message.content[0].text.replace(/```json|```/g, '').trim();
+{"crops":[{"name":"string","sow_indoors":"string or null","transplant_or_direct_sow":"string","harvest":"string","tip":"string"}]}`,
+    settings,
+    { maxTokens: 4096 }
+  );
+  const raw = text.replace(/```json|```/g, '').trim();
   return JSON.parse(raw);
 }
 
@@ -66,18 +225,12 @@ app.post('/api/schedule', async (req, res) => {
   try {
     const BATCH_SIZE = 15;
     if (crops.length <= BATCH_SIZE) {
-      const result = await scheduleForCrops(location, crops);
-      return res.json(result);
+      return res.json(await scheduleForCrops(location, crops));
     }
-
     const batches = [];
-    for (let i = 0; i < crops.length; i += BATCH_SIZE) {
-      batches.push(crops.slice(i, i + BATCH_SIZE));
-    }
-
-    const results = await Promise.all(batches.map(batch => scheduleForCrops(location, batch)));
-    const combined = { crops: results.flatMap(r => r.crops) };
-    res.json(combined);
+    for (let i = 0; i < crops.length; i += BATCH_SIZE) batches.push(crops.slice(i, i + BATCH_SIZE));
+    const results = await Promise.all(batches.map(b => scheduleForCrops(location, b)));
+    res.json({ crops: results.flatMap(r => r.crops) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
@@ -89,12 +242,9 @@ app.post('/api/companion', async (req, res) => {
   if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 3000,
-      messages: [{
-        role: 'user',
-        content: `You are a gardening expert specializing in companion planting. Analyze these crops: ${crops.join(', ')}.
+    const settings = getLLMSettings();
+    const text = await chat(
+      `You are a gardening expert specializing in companion planting. Analyze these crops: ${crops.join(', ')}.
 
 Reply ONLY with valid JSON, no markdown, no extra text:
 {
@@ -120,22 +270,129 @@ Reply ONLY with valid JSON, no markdown, no extra text:
     }
   ],
   "tips": ["general companion planting tip 1", "tip 2", "tip 3"]
-}`
-      }]
-    });
-
-    const raw = message.content[0].text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(raw);
-    res.json(parsed);
+}`,
+      settings,
+      { maxTokens: 3000 }
+    );
+    const raw = text.replace(/```json|```/g, '').trim();
+    res.json(JSON.parse(raw));
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
 });
 
+// ---------------------------------------------------------------------------
+// Plant info (AI-generated, cached per crop name)
+// ---------------------------------------------------------------------------
+
+app.post('/api/plants/info', async (req, res) => {
+  const { crop } = req.body;
+  if (!crop?.trim()) return res.status(400).json({ error: 'Missing crop name' });
+
+  const key = crop.trim().toLowerCase();
+
+  const cached = db.prepare('SELECT data FROM plant_info_cache WHERE crop = ?').get(key);
+  if (cached) return res.json(JSON.parse(cached.data));
+
+  try {
+    const settings = getLLMSettings();
+    const text = await chat(
+      `You are a gardening expert. Provide detailed growing information for: ${crop}.
+
+Reply ONLY with valid JSON, no markdown, no extra text:
+{
+  "description": "1-2 sentence overview of the plant",
+  "difficulty": "Easy | Moderate | Challenging",
+  "spacing_inches": number,
+  "days_to_germination": "e.g. 7–14 days",
+  "days_to_maturity": "e.g. 60–80 days",
+  "sun": "Full sun | Part shade | Full shade",
+  "water": "brief watering needs",
+  "soil": "brief soil preferences",
+  "common_pests": ["pest1", "pest2"],
+  "common_diseases": ["disease1", "disease2"],
+  "companion_benefits": ["plant it near X because Y"],
+  "harvest_tips": "how to know when ready and how to harvest",
+  "storage": "brief storage guidance"
+}`,
+      settings,
+      { maxTokens: 1024 }
+    );
+    const data = JSON.parse(text.replace(/```json|```/g, '').trim());
+    db.prepare('INSERT OR REPLACE INTO plant_info_cache (crop, data) VALUES (?, ?)').run(key, JSON.stringify(data));
+    res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Journal & images
+// ---------------------------------------------------------------------------
+
+app.get('/api/plantings/:id/journal', (req, res) => {
+  const entries = db.prepare(
+    'SELECT * FROM journal_entries WHERE planting_id = ? ORDER BY created_at ASC'
+  ).all(req.params.id);
+  const images = db.prepare(
+    `SELECT ji.* FROM journal_images ji
+     JOIN journal_entries je ON ji.journal_entry_id = je.id
+     WHERE je.planting_id = ?`
+  ).all(req.params.id);
+  const imagesByEntry = {};
+  for (const img of images) {
+    (imagesByEntry[img.journal_entry_id] ||= []).push(img);
+  }
+  res.json(entries.map(e => ({ ...e, images: imagesByEntry[e.id] || [] })));
+});
+
+// POST with optional image upload
+app.post('/api/plantings/:id/journal', upload.single('image'), (req, res) => {
+  const { note, label } = req.body;
+  if (!note?.trim() && !req.file) {
+    return res.status(400).json({ error: 'Entry must have a note or an image' });
+  }
+  const entry = db.prepare(
+    'INSERT INTO journal_entries (planting_id, note, label) VALUES (?, ?, ?)'
+  ).run(req.params.id, note?.trim() || null, label || null);
+
+  let image = null;
+  if (req.file) {
+    const imgRow = db.prepare(
+      'INSERT INTO journal_images (journal_entry_id, filename) VALUES (?, ?)'
+    ).run(entry.lastInsertRowid, req.file.filename);
+    image = { id: imgRow.lastInsertRowid, filename: req.file.filename };
+  }
+  res.json({ id: entry.lastInsertRowid, note: note?.trim() || null, label: label || null, images: image ? [image] : [] });
+});
+
+app.delete('/api/journal/:id', (req, res) => {
+  const images = db.prepare('SELECT filename FROM journal_images WHERE journal_entry_id = ?').all(req.params.id);
+  for (const img of images) {
+    const filePath = path.join(IMAGES_DIR, img.filename);
+    fs.unlink(filePath, () => {}); // best-effort delete
+  }
+  db.prepare('DELETE FROM journal_images WHERE journal_entry_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM journal_entries WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/journal/images/:id', (req, res) => {
+  const img = db.prepare('SELECT filename FROM journal_images WHERE id = ?').get(req.params.id);
+  if (!img) return res.status(404).json({ error: 'Not found' });
+  fs.unlink(path.join(IMAGES_DIR, img.filename), () => {});
+  db.prepare('DELETE FROM journal_images WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Garden / bed / planting CRUD
+// ---------------------------------------------------------------------------
+
 app.get('/api/gardens', (req, res) => {
-  const gardens = db.prepare('SELECT * FROM gardens ORDER BY created_at DESC').all();
-  res.json(gardens);
+  res.json(db.prepare('SELECT * FROM gardens ORDER BY created_at DESC').all());
 });
 
 app.post('/api/gardens', (req, res) => {
@@ -152,8 +409,7 @@ app.delete('/api/gardens/:id', (req, res) => {
 });
 
 app.get('/api/gardens/:id/plantings', (req, res) => {
-  const plantings = db.prepare('SELECT * FROM plantings WHERE garden_id = ? ORDER BY created_at DESC').all(req.params.id);
-  res.json(plantings);
+  res.json(db.prepare('SELECT * FROM plantings WHERE garden_id = ? ORDER BY created_at DESC').all(req.params.id));
 });
 
 app.post('/api/gardens/:id/plantings', (req, res) => {
@@ -164,14 +420,21 @@ app.post('/api/gardens/:id/plantings', (req, res) => {
   res.json({ id: result.lastInsertRowid });
 });
 
+app.put('/api/plantings/:id', (req, res) => {
+  const { crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes } = req.body;
+  db.prepare(
+    'UPDATE plantings SET crop=?, sow_indoors=?, transplant_or_direct_sow=?, harvest=?, tip=?, notes=? WHERE id=?'
+  ).run(crop, sow_indoors || null, transplant_or_direct_sow, harvest, tip, notes || '', req.params.id);
+  res.json({ ok: true });
+});
+
 app.delete('/api/plantings/:id', (req, res) => {
   db.prepare('DELETE FROM plantings WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 app.get('/api/gardens/:id/beds', (req, res) => {
-  const beds = db.prepare('SELECT * FROM beds WHERE garden_id = ?').all(req.params.id);
-  res.json(beds);
+  res.json(db.prepare('SELECT * FROM beds WHERE garden_id = ?').all(req.params.id));
 });
 
 app.post('/api/gardens/:id/beds', (req, res) => {
@@ -184,6 +447,58 @@ if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'frontend/dist')));
   app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'frontend/dist/index.html')));
 }
+
+// ---------------------------------------------------------------------------
+// Weekly planting reminder — every Monday at 8:00 AM server-local time
+// ---------------------------------------------------------------------------
+
+async function sendPushReminders() {
+  const subscriptions = db.prepare('SELECT subscription FROM push_subscriptions').all();
+  if (!subscriptions.length) return;
+
+  const gardens = db.prepare('SELECT id, name FROM gardens').all();
+  if (!gardens.length) return;
+
+  const plantingCounts = db.prepare(
+    'SELECT garden_id, COUNT(*) as count FROM plantings GROUP BY garden_id'
+  ).all();
+  const countByGarden = {};
+  for (const r of plantingCounts) countByGarden[r.garden_id] = r.count;
+
+  const lines = gardens
+    .filter(g => countByGarden[g.id])
+    .map(g => `${g.name} (${countByGarden[g.id]} crop${countByGarden[g.id] !== 1 ? 's' : ''})`);
+
+  if (!lines.length) return;
+
+  const payload = JSON.stringify({
+    title: 'Gardenarr — weekly reminder',
+    body: `Gardens this week: ${lines.join(', ')}. Check your planting schedule!`,
+    url: '/',
+    tag: 'gardenarr-weekly',
+  });
+
+  const dead = [];
+  for (const row of subscriptions) {
+    try {
+      await webpush.sendNotification(JSON.parse(row.subscription), payload);
+    } catch (e) {
+      // 404/410 means the subscription is no longer valid
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        dead.push(JSON.parse(row.subscription).endpoint);
+      } else {
+        console.error('Push error:', e.message);
+      }
+    }
+  }
+  for (const endpoint of dead) {
+    db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+  }
+  if (dead.length) console.log(`Removed ${dead.length} expired push subscription(s)`);
+}
+
+// Run every Monday at 08:00 (server local time)
+cron.schedule('0 8 * * 1', sendPushReminders);
 
 const PORT = process.env.PORT || 3700;
 app.listen(PORT, () => console.log(`Garden planner running on port ${PORT}`));

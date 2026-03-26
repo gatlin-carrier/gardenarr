@@ -27,6 +27,15 @@ export default function GardenDetail({ garden }) {
     fetchPlantings()
   }
 
+  async function updatePlanting(id, data) {
+    await fetch(`/api/plantings/${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    setPlantings(prev => prev.map(p => p.id === id ? { ...p, ...data } : p))
+  }
+
   async function deletePlanting(id) {
     await fetch(`/api/plantings/${id}`, { method: 'DELETE' })
     setPlantings(prev => prev.filter(p => p.id !== id))
@@ -60,11 +69,11 @@ export default function GardenDetail({ garden }) {
       )}
 
       {activeTab === 'companion' && (
-        <CompanionPlanner />
+        <CompanionPlanner savedPlantings={plantings} />
       )}
 
       {activeTab === 'saved' && (
-        <PlantingList plantings={plantings} onDelete={deletePlanting} />
+        <PlantingList plantings={plantings} onUpdate={updatePlanting} onDelete={deletePlanting} />
       )}
     </div>
   )

@@ -23,3 +23,56 @@
 .planting-tip { margin-top: 10px; padding: 8px 12px; background: var(--bg); border-left: 3px solid var(--green-400); font-size: 13px; color: var(--text-muted); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
 .planting-notes { margin-top: 8px; font-size: 13px; color: var(--text-muted); font-style: italic; }
+
+.planting-actions { display: flex; gap: 6px; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.planting-card.editing { border-color: var(--green-400); }
+
+.edit-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.edit-field label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.edit-field input, .edit-field textarea { font-size: 13px; }
+.edit-field textarea { resize: vertical; }
+
+.edit-row { display: flex; gap: 10px; }
+.edit-row .edit-field { flex: 1; }
+
+.edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+/* Plant info panel */
+.plant-info-section { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+
+.plant-info-toggle { font-size: 11px; padding: 3px 10px; color: var(--text-muted); }
+
+.plant-info-panel { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+
+.plant-info-loading { font-size: 13px; color: var(--text-muted); }
+.plant-info-error { font-size: 13px; color: #c0392b; }
+
+.pi-description { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+.pi-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pi-chip {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 80px;
+}
+.pi-chip-label { font-size: 10px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+.pi-chip-value { font-size: 12px; font-weight: 500; color: var(--text); }
+
+.pi-block { display: flex; flex-direction: column; gap: 4px; }
+.pi-block-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.pi-block p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+.pi-list { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.pi-list li { font-size: 13px; color: var(--text-muted); padding-left: 12px; position: relative; }
+.pi-list li::before { content: '·'; position: absolute; left: 0; color: var(--green-400); font-weight: 700; }

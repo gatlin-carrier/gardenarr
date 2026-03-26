@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="#1a3610"/>
+
+  <!-- Stem -->
+  <line x1="256" y1="390" x2="256" y2="210" stroke="#7db85a" stroke-width="22" stroke-linecap="round"/>
+
+  <!-- Left leaf -->
+  <path d="M256 305 Q175 265 185 165 Q255 195 256 305Z" fill="#4a8a2e"/>
+
+  <!-- Right leaf -->
+  <path d="M256 275 Q338 235 328 135 Q258 165 256 275Z" fill="#7db85a"/>
+
+  <!-- Soil line -->
+  <rect x="136" y="390" width="240" height="22" rx="11" fill="#6b4c2a"/>
+</svg>

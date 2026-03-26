@@ -19,6 +19,22 @@
 
 .sidebar-header { border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem; }
 
+.sidebar-header-top { display: flex; align-items: center; justify-content: space-between; }
+
+.settings-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.4);
+  font-size: 18px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+.settings-btn:hover { color: var(--green-100); background: rgba(255,255,255,0.1); }
+.settings-btn--active { color: var(--green-300) !important; }
+.settings-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
 .logo {
   font-family: var(--font-display);
   font-size: 22px;
@@ -59,4 +75,66 @@
   .app-layout { grid-template-columns: 1fr; }
   .sidebar { height: auto; position: static; }
   .main-content { padding: 1rem; }
+}
+
+/* PWA banners */
+.pwa-banner {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+  font-size: 14px;
+  z-index: 2000;
+  white-space: nowrap;
+}
+
+.pwa-update {
+  background: var(--green-900);
+  color: var(--green-100);
+}
+
+.pwa-banner-btn {
+  background: var(--green-400);
+  color: white;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+.pwa-banner-btn:hover { background: var(--green-600); }
+
+.pwa-banner-dismiss {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.pwa-banner-dismiss:hover { color: white; }
+
+.pwa-toast {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--green-800);
+  color: var(--green-100);
+  padding: 10px 18px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+  z-index: 2000;
+  animation: fade-in-up 0.2s ease;
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
