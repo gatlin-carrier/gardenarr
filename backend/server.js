@@ -115,6 +115,21 @@ db.exec(`
 `);
 
 // ---------------------------------------------------------------------------
+// Schema migrations — add columns that may not exist in older DBs
+// ---------------------------------------------------------------------------
+
+const migrations = [
+  'ALTER TABLE gardens ADD COLUMN layout_width_ft  REAL DEFAULT 20',
+  'ALTER TABLE gardens ADD COLUMN layout_length_ft REAL DEFAULT 20',
+  'ALTER TABLE gardens ADD COLUMN bg_image TEXT',
+  'ALTER TABLE beds ADD COLUMN x_ft REAL DEFAULT 0',
+  'ALTER TABLE beds ADD COLUMN y_ft REAL DEFAULT 0',
+];
+for (const sql of migrations) {
+  try { db.prepare(sql).run(); } catch {} // column already exists → silent no-op
+}
+
+// ---------------------------------------------------------------------------
 // VAPID / web-push setup  (keys generated once, persisted in settings table)
 // ---------------------------------------------------------------------------
 
@@ -653,6 +668,102 @@ app.delete('/api/beds/:id/layout/:row/:col', (req, res) => {
 app.delete('/api/beds/:id/layout', (req, res) => {
   db.prepare('DELETE FROM bed_layout WHERE bed_id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Garden layout canvas endpoints
+// ---------------------------------------------------------------------------
+
+// Update garden canvas dimensions (and optionally clear bg)
+app.patch('/api/gardens/:id', (req, res) => {
+  const { layout_width_ft, layout_length_ft } = req.body;
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+  db.prepare(
+    'UPDATE gardens SET layout_width_ft=?, layout_length_ft=? WHERE id=?'
+  ).run(
+    layout_width_ft  != null ? Number(layout_width_ft)  : (garden.layout_width_ft  || 20),
+    layout_length_ft != null ? Number(layout_length_ft) : (garden.layout_length_ft || 20),
+    req.params.id
+  );
+  res.json({ ok: true });
+});
+
+// Move a bed on the canvas
+app.patch('/api/beds/:id/position', (req, res) => {
+  const { x_ft, y_ft } = req.body;
+  db.prepare('UPDATE beds SET x_ft=?, y_ft=? WHERE id=?').run(
+    Number(x_ft) || 0,
+    Number(y_ft) || 0,
+    req.params.id
+  );
+  res.json({ ok: true });
+});
+
+// Upload a background map/satellite image for the garden canvas
+app.post('/api/gardens/:id/layout/bg', upload.single('image'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No image provided' });
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+
+  // Delete the previous background image file if one exists
+  if (garden.bg_image) {
+    fs.unlink(path.join(IMAGES_DIR, garden.bg_image), () => {});
+  }
+
+  db.prepare('UPDATE gardens SET bg_image=? WHERE id=?').run(req.file.filename, req.params.id);
+  res.json({ ok: true, filename: req.file.filename });
+});
+
+// Delete background image
+app.delete('/api/gardens/:id/layout/bg', (req, res) => {
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+  if (garden.bg_image) fs.unlink(path.join(IMAGES_DIR, garden.bg_image), () => {});
+  db.prepare("UPDATE gardens SET bg_image=NULL WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// AI bed arrangement suggestion
+app.post('/api/gardens/:id/layout/suggest', async (req, res) => {
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+
+  const beds = db.prepare('SELECT b.*, GROUP_CONCAT(p.crop) as crops FROM beds b LEFT JOIN plantings p ON p.bed_id = b.id WHERE b.garden_id = ? GROUP BY b.id').all(req.params.id);
+
+  if (!beds.length) return res.status(400).json({ error: 'No beds to arrange' });
+
+  const gardenW = garden.layout_width_ft  || 20;
+  const gardenL = garden.layout_length_ft || 20;
+
+  const bedDescriptions = beds.map(b =>
+    `- Bed "${b.name}" (${b.width_ft || 4}ft × ${b.length_ft || 8}ft): ${b.crops || 'no crops assigned'}`
+  ).join('\n');
+
+  const prompt = `You are a garden layout expert. Arrange these raised beds within a ${gardenW}ft × ${gardenL}ft garden space (width × length, assume north is the top edge).
+
+Beds:
+${bedDescriptions}
+
+Rules:
+- Place taller/sun-loving crops (corn, tomatoes, sunflowers) on the north side so they don't shade shorter crops
+- Group companion plants near each other
+- Leave at least 2ft between beds for walking paths
+- Keep all beds fully inside the garden boundary
+- Beds may not overlap
+
+Return ONLY valid JSON, no markdown:
+{"beds":[{"id":number,"x_ft":number,"y_ft":number}],"tips":["tip1","tip2","tip3"]}`;
+
+  try {
+    const settings = getLLMSettings();
+    const text = await chat(prompt, settings, { maxTokens: 1024 });
+    const data = JSON.parse(text.replace(/```json|```/g, '').trim());
+    res.json(data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 if (process.env.NODE_ENV === 'production') {

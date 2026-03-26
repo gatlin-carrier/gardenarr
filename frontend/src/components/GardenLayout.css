@@ -8,39 +8,125 @@
   gap: 1rem;
 }
 
-/* ---- Bed tabs ---- */
-.bed-tabs {
+/* ── Canvas toolbar ─────────────────────────────────────────────── */
+
+.canvas-toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
-.bed-tab {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 13px;
-  cursor: pointer;
+.canvas-dims {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.canvas-dims label {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.15s;
-}
-.bed-tab:hover { border-color: var(--green-400); color: var(--green-800); background: var(--green-50); }
-.bed-tab.active { background: var(--green-600); border-color: var(--green-600); color: white; }
-.bed-tab.active .bed-tab-dims { color: rgba(255,255,255,0.65); }
-
-.bed-tab-dims { font-size: 11px; color: var(--text-muted); }
-
-.bed-tab-add {
-  border-style: dashed;
+  font-size: 13px;
   color: var(--text-muted);
 }
-.bed-tab-add:hover { border-style: solid; }
 
-/* ---- New bed form ---- */
+.canvas-dims input[type="number"] {
+  width: 62px;
+  text-align: center;
+  padding: 5px 8px;
+  font-size: 14px;
+}
+
+.dim-x { color: var(--text-muted); font-size: 13px; }
+
+.dim-sqft {
+  font-size: 12px;
+  color: var(--green-600);
+  font-weight: 500;
+}
+
+.canvas-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-ai {
+  background: linear-gradient(135deg, var(--green-50), #f5f0ff);
+  border-color: #c4b5fd;
+  color: #6d28d9;
+}
+.btn-ai:hover {
+  background: linear-gradient(135deg, var(--green-100, #dcfce7), #ede9fe);
+  border-color: #a78bfa;
+  color: #5b21b6;
+}
+
+/* ── AI tips panel ──────────────────────────────────────────────── */
+
+.ai-tips-panel {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #f5f0ff, #f0fdf4);
+  border: 1px solid #c4b5fd;
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-tips-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6d28d9;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ai-tips-list {
+  margin: 0;
+  padding: 0 0 0 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-tips-list li {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.ai-tips-dismiss {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: #7c3aed;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.ai-tips-dismiss:hover { background: rgba(109,40,217,0.08); }
+
+.ai-error {
+  padding: 9px 12px;
+  background: #fdf0ee;
+  color: #c0392b;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  border: 1px solid #f5c6c2;
+}
+
+/* ── New bed form ───────────────────────────────────────────────── */
+
 .new-bed-form {
   display: flex;
   flex-direction: column;
@@ -80,16 +166,144 @@
 
 .new-bed-actions { display: flex; gap: 8px; }
 
-/* ---- Main workspace ---- */
-.layout-workspace {
+/* ── SVG garden canvas ──────────────────────────────────────────── */
+
+.canvas-wrap {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.garden-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+
+.svg-bg-image {
+  opacity: 0.45;
+}
+
+.garden-boundary {
+  fill: #f0fdf4;
+  stroke: var(--green-600, #16a34a);
+  stroke-width: 0.08;
+}
+
+.grid-line {
+  stroke: rgba(0, 80, 20, 0.08);
+  stroke-width: 0.03;
+}
+
+.compass-n, .compass-s {
+  font-size: 0.7px;
+  font-weight: 700;
+  fill: var(--text-muted);
+  text-anchor: middle;
+  dominant-baseline: middle;
+  letter-spacing: 0.05px;
+  pointer-events: none;
+}
+
+.dim-label {
+  font-size: 0.55px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Bed rects */
+.bed-group { transition: filter 0.1s; }
+.bed-group:hover .bed-rect { filter: brightness(0.95); }
+.bed-group:active { cursor: grabbing !important; }
+
+.bed-rect {
+  fill: rgba(134, 197, 118, 0.35);
+  stroke: var(--green-600, #16a34a);
+  stroke-width: 0.07;
+  transition: fill 0.15s, stroke 0.15s;
+}
+
+.bed-selected .bed-rect {
+  fill: rgba(34, 197, 94, 0.25);
+  stroke: var(--green-700, #15803d);
+  stroke-width: 0.1;
+  filter: drop-shadow(0 0 0.2px rgba(34,197,94,0.5));
+}
+
+.bed-label {
+  font-size: 0.55px;
+  font-weight: 600;
+  fill: var(--green-900, #14532d);
+  pointer-events: none;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+.canvas-hint {
+  padding: 5px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  text-align: center;
+}
+
+/* ── Paint section ──────────────────────────────────────────────── */
+
+.paint-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.paint-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.paint-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  margin-right: 8px;
+}
+
+.paint-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.paint-workspace {
   display: flex;
   gap: 1.25rem;
   align-items: flex-start;
+  padding: 1rem;
 }
 
-/* ---- Crop palette (left column) ---- */
+/* ── Crop palette ───────────────────────────────────────────────── */
+
 .crop-palette {
-  width: 160px;
+  width: 155px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -166,37 +380,14 @@
 .palette-custom-row { display: flex; gap: 6px; }
 .palette-custom-row input { font-size: 12px; padding: 6px 8px; }
 
-/* ---- Grid area (right column) ---- */
+/* ── Grid area ──────────────────────────────────────────────────── */
+
 .grid-area {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.grid-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.grid-title {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text);
-  margin-right: 8px;
-}
-
-.grid-subtitle {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.grid-scroll {
-  overflow-x: auto;
-  padding-bottom: 4px;
+  gap: 8px;
 }
 
 .grid-compass {
@@ -205,11 +396,16 @@
   color: var(--text-muted);
   text-align: center;
   letter-spacing: 0.1em;
-  margin-bottom: 2px;
-  width: calc(var(--cell-size));
+  width: var(--cell-size);
 }
 
-/* ---- The grid itself ---- */
+.grid-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+/* ── Bed grid cells ─────────────────────────────────────────────── */
+
 .bed-grid {
   display: grid;
   gap: 2px;
@@ -234,9 +430,7 @@
 .bed-grid.mode-paint .bed-cell { cursor: crosshair; }
 .bed-grid.mode-erase .bed-cell { cursor: cell; }
 
-.bed-cell.empty {
-  background: var(--bg);
-}
+.bed-cell.empty { background: var(--bg); }
 .bed-grid.mode-paint .bed-cell.empty:hover {
   border-color: var(--green-400);
   background: var(--green-50);
@@ -245,7 +439,6 @@
   filter: brightness(1.2);
   transform: scale(1.08);
 }
-
 .bed-cell.occupied {
   color: white;
   border-width: 0;
@@ -269,7 +462,8 @@
   pointer-events: none;
 }
 
-/* ---- Legend ---- */
+/* ── Legend ─────────────────────────────────────────────────────── */
+
 .grid-legend {
   display: flex;
   flex-wrap: wrap;
@@ -292,21 +486,20 @@
   flex-shrink: 0;
 }
 
-/* ---- Empty state ---- */
-.layout-empty {
-  padding: 3rem;
-  text-align: center;
-  color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1rem;
+/* ── Danger button ──────────────────────────────────────────────── */
+
+.btn-danger:hover {
+  background: #fdf0ee;
+  color: #c0392b;
+  border-color: #f5c6c2;
 }
 
-/* ---- Responsive ---- */
+/* ── Responsive ─────────────────────────────────────────────────── */
+
 @media (max-width: 700px) {
   :root { --cell-size: 36px; }
-  .layout-workspace { flex-direction: column; }
+  .canvas-toolbar { flex-direction: column; align-items: flex-start; }
+  .paint-workspace { flex-direction: column; }
   .crop-palette { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
   .palette-section-label, .palette-group-label { display: none; }
   .palette-chip { width: auto; }
