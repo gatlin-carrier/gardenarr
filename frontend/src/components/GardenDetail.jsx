@@ -7,7 +7,7 @@ import './GardenDetail.css'
 
 export default function GardenDetail({ garden }) {
   const [plantings, setPlantings] = useState([])
-  const [activeTab, setActiveTab] = useState('schedule')
+  const [activeTab, setActiveTab] = useState('saved')
 
   useEffect(() => { fetchPlantings() }, [garden.id])
 
@@ -54,17 +54,22 @@ export default function GardenDetail({ garden }) {
       </div>
 
       <div className="tabs">
-        <button className={`tab ${activeTab === 'schedule' ? 'active' : ''}`} onClick={() => setActiveTab('schedule')}>
-          Generate schedule
+        <button className={`tab ${activeTab === 'saved' ? 'active' : ''}`} onClick={() => setActiveTab('saved')}>
+          Plantings {plantings.length > 0 && <span className="tab-count">{plantings.length}</span>}
         </button>
         <button className={`tab ${activeTab === 'companion' ? 'active' : ''}`} onClick={() => setActiveTab('companion')}>
-          Companion planting
+          Companions
         </button>
         <button className={`tab ${activeTab === 'layout' ? 'active' : ''}`} onClick={() => setActiveTab('layout')}>
           Bed layout
         </button>
-        <button className={`tab ${activeTab === 'saved' ? 'active' : ''}`} onClick={() => setActiveTab('saved')}>
-          Saved plantings {plantings.length > 0 && <span className="tab-count">{plantings.length}</span>}
+        <div className="tab-spacer" />
+        <button
+          className={`tab tab-new-schedule ${activeTab === 'schedule' ? 'active' : ''}`}
+          onClick={() => setActiveTab('schedule')}
+          title="Generate a new planting schedule"
+        >
+          + New schedule
         </button>
       </div>
 

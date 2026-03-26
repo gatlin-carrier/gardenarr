@@ -1,61 +1,285 @@
-.planting-list { display: flex; flex-direction: column; gap: 10px; }
+/* ── Empty state ────────────────────────────────────────────────── */
 
-.no-plantings { padding: 3rem; text-align: center; color: var(--text-muted); }
-.no-plantings p { margin-bottom: 6px; }
+.no-plantings {
+  padding: 3rem 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.no-plantings-icon { font-size: 2.5rem; margin-bottom: 4px; }
+.no-plantings p { font-size: 15px; font-weight: 500; color: var(--text); }
+.no-plantings-sub { font-size: 13px; color: var(--text-muted); }
+
+/* ── Filter bar ─────────────────────────────────────────────────── */
+
+.planting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pl-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.pl-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.pl-filter-pill:hover {
+  border-color: var(--pill-color, var(--green-400));
+  color: var(--pill-color, var(--green-800));
+  background: var(--green-50);
+}
+.pl-filter-pill.active {
+  background: var(--pill-color, var(--green-600));
+  border-color: var(--pill-color, var(--green-600));
+  color: white;
+}
+.pl-filter-pill.active .pill-count { background: rgba(255,255,255,0.25); color: white; }
+
+.pill-count {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--green-100);
+  color: var(--green-800);
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+
+.pl-empty-filter {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+/* ── Card grid ──────────────────────────────────────────────────── */
+
+.planting-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Plant card ─────────────────────────────────────────────────── */
 
 .planting-card {
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--cat-color, var(--green-400));
   border-radius: var(--radius);
-  padding: 1rem 1.25rem;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.15s;
+}
+.planting-card:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+.planting-card.editing {
+  border-left-color: var(--cat-color, var(--green-400));
+  background: var(--bg);
 }
 
-.planting-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+/* ── Card header ────────────────────────────────────────────────── */
 
-.planting-crop { font-size: 16px; font-weight: 500; color: var(--text); }
+.pc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
 
-.planting-timeline { display: flex; flex-direction: column; gap: 6px; }
+.pc-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-.pt-row { display: flex; align-items: center; gap: 10px; }
+.pc-emoji {
+  font-size: 1.6rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
 
-.pt-label { min-width: 85px; font-size: 12px; color: var(--text-muted); }
+.pc-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
 
-.planting-tip { margin-top: 10px; padding: 8px 12px; background: var(--bg); border-left: 3px solid var(--green-400); font-size: 13px; color: var(--text-muted); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.pc-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
 
-.planting-notes { margin-top: 8px; font-size: 13px; color: var(--text-muted); font-style: italic; }
+.pc-cat-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  width: fit-content;
+}
 
-.planting-actions { display: flex; gap: 6px; }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+.pc-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 
-.planting-card.editing { border-color: var(--green-400); }
+.pc-remove-btn {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  transition: all 0.15s;
+}
+.pc-remove-btn:hover { background: #fef2f2; color: #dc2626; }
 
-.edit-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.edit-field label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.edit-field input, .edit-field textarea { font-size: 13px; }
-.edit-field textarea { resize: vertical; }
+/* ── Timeline ───────────────────────────────────────────────────── */
 
-.edit-row { display: flex; gap: 10px; }
-.edit-row .edit-field { flex: 1; }
+.pc-timeline {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
 
-.edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+.pc-tl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
 
-/* Plant info panel */
-.plant-info-section { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.pc-tl-icon {
+  font-size: 1rem;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
 
-.plant-info-toggle { font-size: 11px; padding: 3px 10px; color: var(--text-muted); }
+.pc-tl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
 
-.plant-info-panel { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+.pc-tl-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pc-tl-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pc-tl-arrow {
+  font-size: 14px;
+  color: var(--text-muted);
+  align-self: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ── Tip & notes ────────────────────────────────────────────────── */
+
+.pc-tip {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-left: 2px solid var(--cat-color, var(--green-400));
+  background: var(--cat-light, var(--green-50));
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  line-height: 1.5;
+}
+
+.pc-notes {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ── Expandable footer ──────────────────────────────────────────── */
+
+.pc-expanders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.pl-expand-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pl-expand-btn:hover { border-color: var(--green-400); color: var(--green-800); background: var(--green-50); }
+
+/* ── Plant info panel (inside card) ────────────────────────────── */
+
+.plant-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.plant-info-panel {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .plant-info-loading { font-size: 13px; color: var(--text-muted); }
-.plant-info-error { font-size: 13px; color: #c0392b; }
+.plant-info-error   { font-size: 13px; color: #c0392b; }
 
 .pi-description { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
 
-.pi-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+.pi-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .pi-chip {
   display: flex;
@@ -76,3 +300,31 @@
 .pi-list { list-style: none; display: flex; flex-direction: column; gap: 3px; }
 .pi-list li { font-size: 13px; color: var(--text-muted); padding-left: 12px; position: relative; }
 .pi-list li::before { content: '·'; position: absolute; left: 0; color: var(--green-400); font-weight: 700; }
+
+/* ── Inline edit form ───────────────────────────────────────────── */
+
+.edit-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.edit-field label { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.edit-field input, .edit-field textarea { font-size: 13px; }
+.edit-field textarea { resize: vertical; }
+
+.edit-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.edit-row .edit-field { flex: 1; min-width: 120px; }
+
+.edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.btn-danger:hover {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .pc-timeline { gap: 8px; }
+  .pc-tl-arrow { display: none; }
+  .edit-row { flex-direction: column; }
+}

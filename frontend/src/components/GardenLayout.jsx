@@ -121,6 +121,9 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
   const [bedWidth, setBedWidth]           = useState(4)
   const [bedLength, setBedLength]         = useState(8)
   const [creating, setCreating]           = useState(false)
+  const [editingBed, setEditingBed]       = useState(false)
+  const [bedDraft, setBedDraft]           = useState({ name: '', width_ft: 4, length_ft: 8 })
+  const [bedSaving, setBedSaving]         = useState(false)
   const [aiLoading, setAiLoading]         = useState(false)
   const [aiTips, setAiTips]               = useState([])
   const [aiError, setAiError]             = useState('')
@@ -195,6 +198,30 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     setLayouts(prev => { const n = { ...prev }; delete n[id]; return n })
     loadedBeds.current.delete(id)
     setSelectedBedId(remaining[0]?.id || null)
+    setEditingBed(false)
+  }
+
+  function startBedEdit() {
+    setBedDraft({ name: selectedBed.name, width_ft: selectedBed.width_ft || 4, length_ft: selectedBed.length_ft || 8 })
+    setEditingBed(true)
+  }
+
+  async function saveBedEdit() {
+    if (!bedDraft.name.trim()) return
+    setBedSaving(true)
+    const w = Math.max(1, Math.min(50, Number(bedDraft.width_ft) || 4))
+    const l = Math.max(1, Math.min(50, Number(bedDraft.length_ft) || 8))
+    await fetch(`/api/beds/${selectedBed.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: bedDraft.name.trim(), width_ft: w, length_ft: l }),
+    })
+    setBeds(prev => prev.map(b => b.id === selectedBed.id
+      ? { ...b, name: bedDraft.name.trim(), width_ft: w, length_ft: l }
+      : b
+    ))
+    setBedSaving(false)
+    setEditingBed(false)
   }
 
   // ── cell painting ─────────────────────────────────────────────────────────
@@ -499,16 +526,55 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
       {selectedBed && (
         <div className="paint-section">
           <div className="paint-header">
-            <div>
-              <span className="paint-title">Painting: {selectedBed.name}</span>
-              <span className="paint-subtitle">{selectedBed.width_ft} × {selectedBed.length_ft} ft · {selectedBed.width_ft * selectedBed.length_ft} sq ft</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {Object.keys(activeLayout).length > 0 && (
-                <button className="btn-ghost btn-sm" onClick={clearLayout}>Clear all</button>
-              )}
-              <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete bed</button>
-            </div>
+            {editingBed ? (
+              <div className="bed-edit-form">
+                <div className="bed-edit-row">
+                  <div className="bed-edit-field bed-edit-name">
+                    <label>Bed name</label>
+                    <input
+                      value={bedDraft.name}
+                      onChange={e => setBedDraft(d => ({ ...d, name: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && saveBedEdit()}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="bed-edit-field">
+                    <label>Width (ft)</label>
+                    <input type="number" min={1} max={50} value={bedDraft.width_ft}
+                      onChange={e => setBedDraft(d => ({ ...d, width_ft: e.target.value }))} />
+                  </div>
+                  <div className="bed-edit-field">
+                    <label>Length (ft)</label>
+                    <input type="number" min={1} max={50} value={bedDraft.length_ft}
+                      onChange={e => setBedDraft(d => ({ ...d, length_ft: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="bed-edit-actions">
+                  <button className="btn-primary btn-sm" onClick={saveBedEdit} disabled={bedSaving || !bedDraft.name.trim()}>
+                    {bedSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button className="btn-ghost btn-sm" onClick={() => setEditingBed(false)}>Cancel</button>
+                  {Object.keys(activeLayout).length > 0 && (
+                    <button className="btn-ghost btn-sm" onClick={clearLayout} style={{ marginLeft: 'auto' }}>Clear crops</button>
+                  )}
+                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete bed</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <span className="paint-title">{selectedBed.name}</span>
+                  <span className="paint-subtitle">{selectedBed.width_ft} × {selectedBed.length_ft} ft · {selectedBed.width_ft * selectedBed.length_ft} sq ft</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn-ghost btn-sm" onClick={startBedEdit}>Edit bed</button>
+                  {Object.keys(activeLayout).length > 0 && (
+                    <button className="btn-ghost btn-sm" onClick={clearLayout}>Clear crops</button>
+                  )}
+                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete</button>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="paint-workspace">

@@ -124,6 +124,8 @@ const migrations = [
   'ALTER TABLE gardens ADD COLUMN bg_image TEXT',
   'ALTER TABLE beds ADD COLUMN x_ft REAL DEFAULT 0',
   'ALTER TABLE beds ADD COLUMN y_ft REAL DEFAULT 0',
+  'ALTER TABLE gardens ADD COLUMN is_default INTEGER DEFAULT 0',
+  'ALTER TABLE gardens ADD COLUMN sort_order INTEGER DEFAULT 0',
 ];
 for (const sql of migrations) {
   try { db.prepare(sql).run(); } catch {} // column already exists → silent no-op
@@ -590,13 +592,30 @@ app.delete('/api/journal/images/:id', (req, res) => {
 // ---------------------------------------------------------------------------
 
 app.get('/api/gardens', (req, res) => {
-  res.json(db.prepare('SELECT * FROM gardens ORDER BY created_at DESC').all());
+  res.json(db.prepare('SELECT * FROM gardens ORDER BY sort_order ASC, created_at DESC').all());
 });
 
 app.post('/api/gardens', (req, res) => {
   const { name, zone, zipcode } = req.body;
   const result = db.prepare('INSERT INTO gardens (name, zone, zipcode) VALUES (?, ?, ?)').run(name, zone, zipcode);
   res.json({ id: result.lastInsertRowid, name, zone, zipcode });
+});
+
+// Must be registered before /:id routes to avoid "reorder" matching :id
+app.post('/api/gardens/reorder', (req, res) => {
+  const { order } = req.body;
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array' });
+  const update = db.prepare('UPDATE gardens SET sort_order=? WHERE id=?');
+  order.forEach((id, i) => update.run(i, id));
+  res.json({ ok: true });
+});
+
+app.post('/api/gardens/:id/set-default', (req, res) => {
+  const garden = db.prepare('SELECT id FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE gardens SET is_default=0').run();
+  db.prepare('UPDATE gardens SET is_default=1 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 app.delete('/api/gardens/:id', (req, res) => {
@@ -639,6 +658,19 @@ app.post('/api/gardens/:id/beds', (req, res) => {
   const { name, width_ft, length_ft } = req.body;
   const result = db.prepare('INSERT INTO beds (garden_id, name, width_ft, length_ft) VALUES (?, ?, ?, ?)').run(req.params.id, name, width_ft, length_ft);
   res.json({ id: result.lastInsertRowid, name, width_ft: width_ft || 4, length_ft: length_ft || 8 });
+});
+
+app.put('/api/beds/:id', (req, res) => {
+  const { name, width_ft, length_ft } = req.body;
+  const bed = db.prepare('SELECT * FROM beds WHERE id = ?').get(req.params.id);
+  if (!bed) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE beds SET name=?, width_ft=?, length_ft=? WHERE id=?').run(
+    name?.trim() ?? bed.name,
+    width_ft  != null ? Number(width_ft)  : bed.width_ft,
+    length_ft != null ? Number(length_ft) : bed.length_ft,
+    req.params.id
+  );
+  res.json({ ok: true });
 });
 
 app.delete('/api/beds/:id', (req, res) => {

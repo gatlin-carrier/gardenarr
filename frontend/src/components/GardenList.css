@@ -59,32 +59,99 @@
 .garden-items { display: flex; flex-direction: column; gap: 4px; }
 
 .garden-item {
-  padding: 10px 12px;
+  padding: 9px 10px;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
   position: relative;
   border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .garden-item:hover { background: rgba(255,255,255,0.08); }
 .garden-item.active { background: rgba(125,184,90,0.2); border-color: rgba(125,184,90,0.3); }
 
-.garden-item-name { font-size: 14px; font-weight: 500; color: white; }
+/* Drag-and-drop indicators */
+.garden-item.dragging { opacity: 0.45; }
+.garden-item.drop-before { box-shadow: inset 0 2px 0 rgba(125,184,90,0.8); }
+.garden-item.drop-after  { box-shadow: inset 0 -2px 0 rgba(125,184,90,0.8); }
+
+.drag-handle {
+  font-size: 14px;
+  color: rgba(255,255,255,0.2);
+  cursor: grab;
+  flex-shrink: 0;
+  line-height: 1;
+  padding: 2px 1px;
+  transition: color 0.15s;
+  user-select: none;
+}
+.garden-item:hover .drag-handle { color: rgba(255,255,255,0.5); }
+.drag-handle:active { cursor: grabbing; }
+
+.garden-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.garden-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .garden-item-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
 
+.default-badge {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+  letter-spacing: 0.02em;
+}
+
+/* Action buttons (star + delete) */
+.garden-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.garden-item:hover .garden-item-actions { opacity: 1; }
+/* Always show star if this is the default */
+.garden-item:has(.starred) .garden-item-actions { opacity: 1; }
+
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: rgba(255,255,255,0.35);
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+.star-btn:hover { color: #fbbf24; background: rgba(251,191,36,0.1); }
+.star-btn.starred { color: #fbbf24; }
+
 .delete-garden-btn {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
   background: none;
   border: none;
   color: rgba(255,255,255,0.3);
   font-size: 16px;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
-  display: none;
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
 }
-.garden-item:hover .delete-garden-btn { display: block; }
 .delete-garden-btn:hover { color: #ff6b6b; background: rgba(255,107,107,0.1); }

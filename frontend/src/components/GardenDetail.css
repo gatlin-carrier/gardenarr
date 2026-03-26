@@ -22,7 +22,17 @@
   margin-top: 6px;
 }
 
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 0; align-items: center; }
+
+.tab-spacer { flex: 1; }
+
+.tab-new-schedule {
+  color: var(--green-700);
+  font-weight: 500;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.tab-new-schedule:hover { background: var(--green-50); color: var(--green-800); }
+.tab-new-schedule.active { color: var(--green-800); border-bottom-color: var(--green-600); }
 
 .tab {
   padding: 8px 16px;

@@ -59,6 +59,12 @@ export default function App() {
       const res = await fetch('/api/gardens')
       const data = await res.json()
       setGardens(data)
+      // Auto-select the default garden (or first) on initial load
+      setActiveGarden(prev => {
+        if (prev) return prev
+        if (!data.length) return null
+        return data.find(g => g.is_default) || data[0]
+      })
     } catch(e) { console.error(e) }
     setLoading(false)
   }
@@ -76,8 +82,26 @@ export default function App() {
 
   async function deleteGarden(id) {
     await fetch(`/api/gardens/${id}`, { method: 'DELETE' })
-    setGardens(prev => prev.filter(g => g.id !== id))
-    if (activeGarden?.id === id) setActiveGarden(null)
+    setGardens(prev => {
+      const remaining = prev.filter(g => g.id !== id)
+      if (activeGarden?.id === id) setActiveGarden(remaining[0] ?? null)
+      return remaining
+    })
+  }
+
+  async function setDefaultGarden(id) {
+    await fetch(`/api/gardens/${id}/set-default`, { method: 'POST' })
+    setGardens(prev => prev.map(g => ({ ...g, is_default: g.id === id ? 1 : 0 })))
+  }
+
+  async function reorderGardens(newOrderIds) {
+    const map = Object.fromEntries(gardens.map(g => [g.id, g]))
+    setGardens(newOrderIds.map(id => map[id]).filter(Boolean))
+    fetch('/api/gardens/reorder', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order: newOrderIds }),
+    }).catch(console.error)
   }
 
   if (loading) return (
@@ -136,6 +160,8 @@ export default function App() {
             onSelect={setActiveGarden}
             onCreate={createGarden}
             onDelete={deleteGarden}
+            onSetDefault={setDefaultGarden}
+            onReorder={reorderGardens}
           />
         </aside>
         <main className="main-content">
