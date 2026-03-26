@@ -99,6 +99,14 @@ db.exec(`
     subscription TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS companion_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    garden_id INTEGER REFERENCES gardens(id),
+    crop_key TEXT NOT NULL,
+    data TEXT NOT NULL,
+    cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(garden_id, crop_key)
+  );
   CREATE TABLE IF NOT EXISTS llm_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -572,6 +580,37 @@ app.post('/api/companion', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Companion cache (per garden)
+// ---------------------------------------------------------------------------
+
+function companionCropKey(crops) {
+  return [...crops].map(c => c.trim().toLowerCase()).sort().join('||');
+}
+
+app.get('/api/gardens/:id/companion', (req, res) => {
+  const row = db.prepare(
+    'SELECT data, crop_key, cached_at FROM companion_cache WHERE garden_id = ? ORDER BY cached_at DESC LIMIT 1'
+  ).get(req.params.id);
+  if (!row) return res.json(null);
+  res.json({ ...JSON.parse(row.data), crop_key: row.crop_key, cached_at: row.cached_at });
+});
+
+app.post('/api/gardens/:id/companion', (req, res) => {
+  const { crops, result } = req.body;
+  if (!crops?.length || !result) return res.status(400).json({ error: 'Missing crops or result' });
+  const key = companionCropKey(crops);
+  db.prepare(
+    'INSERT OR REPLACE INTO companion_cache (garden_id, crop_key, data, cached_at) VALUES (?, ?, ?, datetime(\'now\'))'
+  ).run(req.params.id, key, JSON.stringify(result));
+  res.json({ ok: true });
+});
+
+app.delete('/api/gardens/:id/companion', (req, res) => {
+  db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // Plant info (AI-generated, cached per crop name)
 // ---------------------------------------------------------------------------
 
@@ -615,6 +654,16 @@ Reply ONLY with valid JSON, no markdown, no extra text:
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// Return which crop names are already in the plant_info_cache
+app.post('/api/plants/info/cached', (req, res) => {
+  const { crops } = req.body;
+  if (!crops?.length) return res.json({ cached: [] });
+  const keys = crops.map(c => c.trim().toLowerCase());
+  const placeholders = keys.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT crop FROM plant_info_cache WHERE crop IN (${placeholders})`).all(...keys);
+  res.json({ cached: rows.map(r => r.crop) });
 });
 
 // ---------------------------------------------------------------------------
@@ -710,6 +759,7 @@ app.post('/api/gardens/:id/set-default', (req, res) => {
 app.delete('/api/gardens/:id', (req, res) => {
   db.prepare('DELETE FROM plantings WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM beds WHERE garden_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM gardens WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });

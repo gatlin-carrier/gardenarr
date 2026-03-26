@@ -136,6 +136,7 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
   const [activeCategory, setActiveCategory] = useState(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [addDraft, setAddDraft]   = useState({ crop: '', sow_indoors: '', transplant_or_direct_sow: '', harvest: '', tip: '', notes: '' })
+  const [bulkGuide, setBulkGuide] = useState({ loading: false, done: 0, total: 0, errors: [] })
 
   // Build category counts from full list
   const categoryCounts = {}
@@ -193,6 +194,43 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
     setDraft({})
   }
 
+  async function fetchAllGuides() {
+    const uniqueCrops = [...new Set(plantings.map(p => p.crop))]
+    // Check which are already cached
+    let uncached = uniqueCrops
+    try {
+      const res = await fetch('/api/plants/info/cached', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ crops: uniqueCrops }),
+      })
+      const { cached } = await res.json()
+      const cachedSet = new Set(cached)
+      uncached = uniqueCrops.filter(c => !cachedSet.has(c.trim().toLowerCase()))
+    } catch {}
+
+    if (!uncached.length) {
+      setBulkGuide({ loading: false, done: uniqueCrops.length, total: uniqueCrops.length, errors: [] })
+      return
+    }
+
+    setBulkGuide({ loading: true, done: 0, total: uncached.length, errors: [] })
+    const errors = []
+    for (let i = 0; i < uncached.length; i++) {
+      try {
+        await fetch('/api/plants/info', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ crop: uncached[i] }),
+        })
+      } catch {
+        errors.push(uncached[i])
+      }
+      setBulkGuide(prev => ({ ...prev, done: i + 1, errors: [...errors] }))
+    }
+    setBulkGuide(prev => ({ ...prev, loading: false }))
+  }
+
   const addFormJsx = showAddForm && (
     <div className="planting-card editing add-form-card">
       <div className="edit-field">
@@ -241,12 +279,27 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
   return (
     <div className="planting-list">
 
-      {/* Add plant button */}
+      {/* Toolbar */}
       <div className="pl-add-bar">
+        {!bulkGuide.loading ? (
+          <button className="btn-ghost btn-sm" onClick={fetchAllGuides} title="Pre-fetch and cache all growing guides">
+            {bulkGuide.done > 0 && !bulkGuide.loading ? 'All guides cached' : 'Fetch all growing guides'}
+          </button>
+        ) : (
+          <div className="pl-bulk-progress">
+            <div className="pl-bulk-bar">
+              <div className="pl-bulk-fill" style={{ width: `${(bulkGuide.done / bulkGuide.total) * 100}%` }} />
+            </div>
+            <span className="pl-bulk-label">Fetching guides... {bulkGuide.done}/{bulkGuide.total}</span>
+          </div>
+        )}
         <button className="btn-primary btn-sm" onClick={() => setShowAddForm(s => !s)}>
           {showAddForm ? 'Cancel' : '+ Add plant'}
         </button>
       </div>
+      {bulkGuide.errors.length > 0 && (
+        <div className="pl-bulk-errors">Failed to fetch: {bulkGuide.errors.join(', ')}</div>
+      )}
       {addFormJsx}
 
       {/* Category filter bar */}

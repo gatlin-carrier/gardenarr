@@ -222,6 +222,46 @@
 .pl-add-bar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.pl-bulk-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.pl-bulk-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 80px;
+}
+
+.pl-bulk-fill {
+  height: 100%;
+  background: var(--green-600);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.pl-bulk-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pl-bulk-errors {
+  font-size: 12px;
+  color: #c0392b;
+  padding: 6px 10px;
+  background: #fef2f2;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
 }
 
 .add-form-card {

@@ -10,12 +10,36 @@ const ALL_CROPS = [
   'Corn','Pumpkins','Watermelon','Potatoes','Sunflowers','Nasturtiums'
 ]
 
-export default function CompanionPlanner({ savedPlantings = [] }) {
+export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
   const [selected, setSelected] = useState(new Set())
   const [customCrop, setCustomCrop] = useState('')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [cachedInfo, setCachedInfo] = useState(null)
+
+  // Load cached companion data for this garden
+  useEffect(() => {
+    if (!gardenId) return
+    fetch(`/api/gardens/${gardenId}/companion`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.pairs) {
+          setResult(data)
+          setCachedInfo(data.cached_at ? `Cached ${new Date(data.cached_at + 'Z').toLocaleDateString()}` : 'Cached')
+          // Restore the crop selection from the cached crop_key
+          if (data.crop_key) {
+            const crops = data.crop_key.split('||').map(c => c.trim())
+            // Try to match original casing from savedPlantings or ALL_CROPS
+            const allNames = [...ALL_CROPS, ...savedPlantings.map(p => p.crop)]
+            const nameMap = {}
+            for (const n of allNames) nameMap[n.toLowerCase()] = n
+            setSelected(new Set(crops.map(c => nameMap[c] || c)))
+          }
+        }
+      })
+      .catch(() => {})
+  }, [gardenId])
 
   // Pre-select saved plantings when the component mounts or saved plantings change
   useEffect(() => {
@@ -36,6 +60,7 @@ export default function CompanionPlanner({ savedPlantings = [] }) {
       return next
     })
     setResult(null)
+    setCachedInfo(null)
   }
 
   function addCustom() {
@@ -49,15 +74,25 @@ export default function CompanionPlanner({ savedPlantings = [] }) {
     setLoading(true)
     setError('')
     setResult(null)
+    setCachedInfo(null)
     try {
+      const cropList = [...selected]
       const res = await fetch('/api/companion', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ crops: [...selected] })
+        body: JSON.stringify({ crops: cropList })
       })
       const data = await res.json()
       if (data.error) { setError(data.error); return }
       setResult(data)
+      // Cache the result for this garden
+      if (gardenId) {
+        fetch(`/api/gardens/${gardenId}/companion`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ crops: cropList, result: data })
+        }).catch(() => {})
+      }
     } catch(e) {
       setError('Failed to analyze. Is the backend running?')
     } finally {
@@ -130,13 +165,16 @@ export default function CompanionPlanner({ savedPlantings = [] }) {
 
       {error && <div className="error-msg">{error}</div>}
 
-      <button
-        className="btn-primary analyze-btn"
-        onClick={analyze}
-        disabled={loading || selected.size < 2}
-      >
-        {loading ? 'Analyzing companion relationships...' : `Analyze ${selected.size} crop${selected.size !== 1 ? 's' : ''}`}
-      </button>
+      <div className="cp-action-row">
+        <button
+          className="btn-primary analyze-btn"
+          onClick={analyze}
+          disabled={loading || selected.size < 2}
+        >
+          {loading ? 'Analyzing companion relationships...' : (cachedInfo && result ? `Re-analyze ${selected.size} crops` : `Analyze ${selected.size} crop${selected.size !== 1 ? 's' : ''}`)}
+        </button>
+        {cachedInfo && <span className="cp-cached-badge">{cachedInfo}</span>}
+      </div>
 
       {result && (
         <div className="companion-results">

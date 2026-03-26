@@ -89,7 +89,7 @@ export default function GardenDetail({ garden }) {
       )}
 
       {activeTab === 'companion' && (
-        <CompanionPlanner savedPlantings={plantings} />
+        <CompanionPlanner gardenId={garden.id} savedPlantings={plantings} />
       )}
 
       {activeTab === 'layout' && (

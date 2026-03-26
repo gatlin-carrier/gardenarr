@@ -43,7 +43,19 @@
 
 .error-msg { padding: 10px 12px; background: #fdf0ee; color: #c0392b; border-radius: var(--radius-sm); font-size: 13px; border: 1px solid #f5c6c2; }
 
+.cp-action-row { display: flex; align-items: center; gap: 10px; }
+
 .analyze-btn { padding: 11px 20px; font-size: 15px; border-radius: var(--radius-sm); }
+
+.cp-cached-badge {
+  font-size: 12px;
+  color: var(--green-800);
+  background: var(--green-50);
+  border: 1px solid var(--green-100);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
 
 .companion-results { display: flex; flex-direction: column; gap: 1.5rem; }
 
