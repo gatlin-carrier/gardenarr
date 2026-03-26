@@ -1,0 +1,25 @@
+.planting-list { display: flex; flex-direction: column; gap: 10px; }
+
+.no-plantings { padding: 3rem; text-align: center; color: var(--text-muted); }
+.no-plantings p { margin-bottom: 6px; }
+
+.planting-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+
+.planting-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+
+.planting-crop { font-size: 16px; font-weight: 500; color: var(--text); }
+
+.planting-timeline { display: flex; flex-direction: column; gap: 6px; }
+
+.pt-row { display: flex; align-items: center; gap: 10px; }
+
+.pt-label { min-width: 85px; font-size: 12px; color: var(--text-muted); }
+
+.planting-tip { margin-top: 10px; padding: 8px 12px; background: var(--bg); border-left: 3px solid var(--green-400); font-size: 13px; color: var(--text-muted); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+
+.planting-notes { margin-top: 8px; font-size: 13px; color: var(--text-muted); font-style: italic; }

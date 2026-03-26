@@ -1,0 +1,90 @@
+.garden-list { display: flex; flex-direction: column; gap: 10px; }
+
+.garden-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.add-btn {
+  background: rgba(255,255,255,0.1);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.add-btn:hover { background: rgba(255,255,255,0.2); }
+
+.new-garden-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 8px;
+}
+
+.new-garden-form input,
+.new-garden-form select {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: white;
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.new-garden-form input::placeholder { color: rgba(255,255,255,0.35); }
+.new-garden-form select option { background: var(--green-900); color: white; }
+.new-garden-form input:focus, .new-garden-form select:focus {
+  border-color: var(--green-400);
+  box-shadow: none;
+  outline: none;
+}
+
+.create-btn {
+  background: var(--green-400);
+  color: white;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+.create-btn:hover { background: var(--green-200); color: var(--green-900); }
+
+.garden-items { display: flex; flex-direction: column; gap: 4px; }
+
+.garden-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+  border: 1px solid transparent;
+}
+.garden-item:hover { background: rgba(255,255,255,0.08); }
+.garden-item.active { background: rgba(125,184,90,0.2); border-color: rgba(125,184,90,0.3); }
+
+.garden-item-name { font-size: 14px; font-weight: 500; color: white; }
+.garden-item-meta { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+
+.delete-garden-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: none;
+}
+.garden-item:hover .delete-garden-btn { display: block; }
+.delete-garden-btn:hover { color: #ff6b6b; background: rgba(255,107,107,0.1); }

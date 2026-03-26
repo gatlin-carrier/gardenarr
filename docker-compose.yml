@@ -1,0 +1,13 @@
+services:
+  garden-planner:
+    build: .
+    container_name: garden-planner
+    restart: unless-stopped
+    ports:
+      - "3700:3700"
+    volumes:
+      - /DATA/AppData/garden-planner:/data
+    environment:
+      - NODE_ENV=production
+      - DB_PATH=/data/garden.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
