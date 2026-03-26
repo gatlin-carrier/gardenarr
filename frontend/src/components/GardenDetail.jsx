@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import CropScheduler from './CropScheduler.jsx'
 import PlantingList from './PlantingList.jsx'
 import CompanionPlanner from './CompanionPlanner.jsx'
+import GardenLayout from './GardenLayout.jsx'
 import './GardenDetail.css'
 
 export default function GardenDetail({ garden }) {
@@ -59,6 +60,9 @@ export default function GardenDetail({ garden }) {
         <button className={`tab ${activeTab === 'companion' ? 'active' : ''}`} onClick={() => setActiveTab('companion')}>
           Companion planting
         </button>
+        <button className={`tab ${activeTab === 'layout' ? 'active' : ''}`} onClick={() => setActiveTab('layout')}>
+          Bed layout
+        </button>
         <button className={`tab ${activeTab === 'saved' ? 'active' : ''}`} onClick={() => setActiveTab('saved')}>
           Saved plantings {plantings.length > 0 && <span className="tab-count">{plantings.length}</span>}
         </button>
@@ -70,6 +74,10 @@ export default function GardenDetail({ garden }) {
 
       {activeTab === 'companion' && (
         <CompanionPlanner savedPlantings={plantings} />
+      )}
+
+      {activeTab === 'layout' && (
+        <GardenLayout garden={garden} plantings={plantings} />
       )}
 
       {activeTab === 'saved' && (

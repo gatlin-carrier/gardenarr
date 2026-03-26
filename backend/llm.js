@@ -6,6 +6,8 @@ const DEFAULT_MODELS = {
   openai: 'gpt-4o',
   google: 'gemini-1.5-pro',
   ollama: 'llama3.2',
+  lmstudio: 'local-model',
+  custom: '',
 };
 
 /**
@@ -50,12 +52,19 @@ async function chat(userMessage, settings, { maxTokens = 4096 } = {}) {
       return result.response.text();
     }
 
-    case 'ollama': {
-      // Ollama exposes an OpenAI-compatible API
+    case 'ollama':
+    case 'lmstudio':
+    case 'custom': {
+      // All three expose an OpenAI-compatible API
+      const defaultUrls = {
+        ollama: 'http://localhost:11434/v1',
+        lmstudio: 'http://localhost:1234/v1',
+        custom: 'http://localhost:8080/v1',
+      };
       const OpenAI = require('openai');
       const client = new OpenAI({
-        apiKey: 'ollama',
-        baseURL: settings.ollama_base_url || 'http://localhost:11434/v1',
+        apiKey: settings.api_key || provider,
+        baseURL: settings.ollama_base_url || defaultUrls[provider],
       });
       const res = await client.chat.completions.create({
         model,
@@ -66,7 +75,7 @@ async function chat(userMessage, settings, { maxTokens = 4096 } = {}) {
     }
 
     default:
-      throw new Error(`Unknown LLM provider: "${provider}". Valid options: anthropic, openai, google, ollama`);
+      throw new Error(`Unknown LLM provider: "${provider}". Valid options: anthropic, openai, google, ollama, lmstudio, custom`);
   }
 }
 

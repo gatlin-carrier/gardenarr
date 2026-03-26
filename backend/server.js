@@ -85,11 +85,32 @@ db.exec(`
     filename TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS bed_layout (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bed_id INTEGER REFERENCES beds(id),
+    row INTEGER NOT NULL,
+    col INTEGER NOT NULL,
+    crop TEXT NOT NULL,
+    UNIQUE(bed_id, row, col)
+  );
   CREATE TABLE IF NOT EXISTS push_subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     endpoint TEXT UNIQUE NOT NULL,
     subscription TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS llm_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT,
+    api_key TEXT,
+    base_url TEXT,
+    is_active INTEGER DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS task_routing (
+    task TEXT PRIMARY KEY,
+    llm_config_id INTEGER REFERENCES llm_configs(id)
   );
 `);
 
@@ -121,22 +142,41 @@ webpush.setVapidDetails(
 // LLM settings helpers
 // ---------------------------------------------------------------------------
 
+function maskKey(key) {
+  if (!key) return null;
+  if (key.length <= 8) return '****';
+  return key.slice(0, 7) + '****';
+}
+
 function getLLMSettings() {
+  // Prefer the active config from llm_configs table
+  const active = db.prepare('SELECT * FROM llm_configs WHERE is_active = 1 LIMIT 1').get();
+  if (active) {
+    let apiKey = active.api_key || null;
+    if (!apiKey) {
+      if (active.provider === 'anthropic') apiKey = process.env.ANTHROPIC_API_KEY || null;
+      else if (active.provider === 'openai')  apiKey = process.env.OPENAI_API_KEY  || null;
+      else if (active.provider === 'google')  apiKey = process.env.GOOGLE_API_KEY  || null;
+    }
+    return {
+      provider: active.provider,
+      model: active.model || null,
+      api_key: apiKey,
+      ollama_base_url: active.base_url || null,
+    };
+  }
+
+  // Legacy fallback: read from old flat settings table
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const s = {};
   for (const r of rows) s[r.key] = r.value;
-
   const provider = s.provider || 'anthropic';
-
-  // Fall back to environment variables when no key has been configured via UI
   let apiKey = s.api_key || null;
   if (!apiKey) {
     if (provider === 'anthropic') apiKey = process.env.ANTHROPIC_API_KEY || null;
     else if (provider === 'openai')  apiKey = process.env.OPENAI_API_KEY  || null;
     else if (provider === 'google')  apiKey = process.env.GOOGLE_API_KEY  || null;
-    // ollama needs no key
   }
-
   return {
     provider,
     model: s.model || null,
@@ -145,14 +185,139 @@ function getLLMSettings() {
   };
 }
 
-function maskKey(key) {
-  if (!key) return null;
-  if (key.length <= 8) return '****';
-  return key.slice(0, 7) + '****';
+function getLLMSettingsForTask(task) {
+  const row = db.prepare('SELECT llm_config_id FROM task_routing WHERE task = ?').get(task);
+  if (row?.llm_config_id) {
+    const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(row.llm_config_id);
+    if (cfg) {
+      let apiKey = cfg.api_key || null;
+      if (!apiKey) {
+        if (cfg.provider === 'anthropic') apiKey = process.env.ANTHROPIC_API_KEY || null;
+        else if (cfg.provider === 'openai')  apiKey = process.env.OPENAI_API_KEY  || null;
+        else if (cfg.provider === 'google')  apiKey = process.env.GOOGLE_API_KEY  || null;
+      }
+      return { provider: cfg.provider, model: cfg.model || null, api_key: apiKey, ollama_base_url: cfg.base_url || null };
+    }
+  }
+  return getLLMSettings();
 }
 
 // ---------------------------------------------------------------------------
-// Settings API  (keys are NEVER returned in full — only masked hints)
+// LLM configs API  (multi-provider management)
+// ---------------------------------------------------------------------------
+
+function serializeConfig(cfg) {
+  return {
+    id: cfg.id,
+    name: cfg.name,
+    provider: cfg.provider,
+    model: cfg.model || '',
+    api_key_hint: maskKey(cfg.api_key),
+    base_url: cfg.base_url || '',
+    is_active: cfg.is_active === 1,
+  };
+}
+
+app.get('/api/llm-configs', (_req, res) => {
+  const configs = db.prepare('SELECT * FROM llm_configs ORDER BY id ASC').all();
+  res.json(configs.map(serializeConfig));
+});
+
+app.post('/api/llm-configs', (req, res) => {
+  const { name, provider, model, api_key, base_url, make_active } = req.body;
+  if (!name?.trim() || !provider) return res.status(400).json({ error: 'name and provider are required' });
+
+  const existing = db.prepare('SELECT COUNT(*) as c FROM llm_configs').get();
+  const shouldActivate = make_active || existing.c === 0 ? 1 : 0;
+
+  if (shouldActivate) {
+    db.prepare('UPDATE llm_configs SET is_active = 0').run();
+  }
+
+  const result = db.prepare(
+    'INSERT INTO llm_configs (name, provider, model, api_key, base_url, is_active) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(name.trim(), provider, model || null, api_key || null, base_url || null, shouldActivate);
+
+  const created = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(result.lastInsertRowid);
+  res.json(serializeConfig(created));
+});
+
+app.put('/api/llm-configs/:id', (req, res) => {
+  const { name, provider, model, api_key, base_url } = req.body;
+  const id = req.params.id;
+  const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(id);
+  if (!cfg) return res.status(404).json({ error: 'Not found' });
+
+  db.prepare(
+    'UPDATE llm_configs SET name=?, provider=?, model=?, base_url=? WHERE id=?'
+  ).run(
+    name?.trim() ?? cfg.name,
+    provider ?? cfg.provider,
+    model !== undefined ? (model || null) : cfg.model,
+    base_url !== undefined ? (base_url || null) : cfg.base_url,
+    id
+  );
+  // Only update key if a non-empty value was sent
+  if (api_key?.trim()) {
+    db.prepare('UPDATE llm_configs SET api_key=? WHERE id=?').run(api_key.trim(), id);
+  }
+
+  const updated = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(id);
+  res.json(serializeConfig(updated));
+});
+
+app.post('/api/llm-configs/:id/activate', (req, res) => {
+  const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(req.params.id);
+  if (!cfg) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE llm_configs SET is_active = 0').run();
+  db.prepare('UPDATE llm_configs SET is_active = 1 WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/llm-configs/:id', (req, res) => {
+  const cfg = db.prepare('SELECT * FROM llm_configs WHERE id = ?').get(req.params.id);
+  if (!cfg) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM llm_configs WHERE id = ?').run(req.params.id);
+  // If we deleted the active one, activate the first remaining config
+  if (cfg.is_active) {
+    const next = db.prepare('SELECT id FROM llm_configs ORDER BY id ASC LIMIT 1').get();
+    if (next) db.prepare('UPDATE llm_configs SET is_active = 1 WHERE id = ?').run(next.id);
+  }
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Task routing API
+// ---------------------------------------------------------------------------
+
+const KNOWN_TASKS = [
+  { task: 'schedule',    label: 'Planting schedule' },
+  { task: 'companion',   label: 'Companion planting' },
+  { task: 'plant_info',  label: 'Plant info' },
+];
+
+app.get('/api/task-routing', (_req, res) => {
+  const rows = db.prepare('SELECT task, llm_config_id FROM task_routing').all();
+  const map = {};
+  for (const r of rows) map[r.task] = r.llm_config_id;
+  res.json(KNOWN_TASKS.map(t => ({ ...t, llm_config_id: map[t.task] || null })));
+});
+
+app.post('/api/task-routing', (req, res) => {
+  // body: { schedule: 3, companion: null, plant_info: 1 }
+  const upsert = db.prepare('INSERT OR REPLACE INTO task_routing (task, llm_config_id) VALUES (?, ?)');
+  const del    = db.prepare('DELETE FROM task_routing WHERE task = ?');
+  for (const { task } of KNOWN_TASKS) {
+    if (!(task in req.body)) continue;
+    const val = req.body[task];
+    if (val) upsert.run(task, val);
+    else del.run(task);
+  }
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy settings API  (kept for backward compatibility)
 // ---------------------------------------------------------------------------
 
 app.get('/api/settings', (req, res) => {
@@ -168,13 +333,10 @@ app.get('/api/settings', (req, res) => {
 app.post('/api/settings', (req, res) => {
   const { provider, model, api_key, ollama_base_url } = req.body;
   const set = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-
   if (provider !== undefined) set.run('provider', provider);
   if (model !== undefined)    set.run('model', model || '');
-  // Only update the stored key if the client sent a non-empty value
   if (api_key)                set.run('api_key', api_key);
   if (ollama_base_url !== undefined) set.run('ollama_base_url', ollama_base_url || '');
-
   res.json({ ok: true });
 });
 
@@ -206,7 +368,7 @@ app.post('/api/push/unsubscribe', (req, res) => {
 // ---------------------------------------------------------------------------
 
 async function scheduleForCrops(location, crops) {
-  const settings = getLLMSettings();
+  const settings = getLLMSettingsForTask('schedule');
   const text = await chat(
     `You are a gardening expert. For ${location}, give a planting schedule for: ${crops.join(', ')}.
 Reply ONLY with valid JSON, no markdown, no extra text:
@@ -242,7 +404,7 @@ app.post('/api/companion', async (req, res) => {
   if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
 
   try {
-    const settings = getLLMSettings();
+    const settings = getLLMSettingsForTask('companion');
     const text = await chat(
       `You are a gardening expert specializing in companion planting. Analyze these crops: ${crops.join(', ')}.
 
@@ -296,7 +458,7 @@ app.post('/api/plants/info', async (req, res) => {
   if (cached) return res.json(JSON.parse(cached.data));
 
   try {
-    const settings = getLLMSettings();
+    const settings = getLLMSettingsForTask('plant_info');
     const text = await chat(
       `You are a gardening expert. Provide detailed growing information for: ${crop}.
 
@@ -440,7 +602,36 @@ app.get('/api/gardens/:id/beds', (req, res) => {
 app.post('/api/gardens/:id/beds', (req, res) => {
   const { name, width_ft, length_ft } = req.body;
   const result = db.prepare('INSERT INTO beds (garden_id, name, width_ft, length_ft) VALUES (?, ?, ?, ?)').run(req.params.id, name, width_ft, length_ft);
-  res.json({ id: result.lastInsertRowid, name, width_ft, length_ft });
+  res.json({ id: result.lastInsertRowid, name, width_ft: width_ft || 4, length_ft: length_ft || 8 });
+});
+
+app.delete('/api/beds/:id', (req, res) => {
+  db.prepare('DELETE FROM bed_layout WHERE bed_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM beds WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/beds/:id/layout', (req, res) => {
+  res.json(db.prepare('SELECT row, col, crop FROM bed_layout WHERE bed_id = ?').all(req.params.id));
+});
+
+app.put('/api/beds/:id/layout/:row/:col', (req, res) => {
+  const { crop } = req.body;
+  if (!crop?.trim()) return res.status(400).json({ error: 'Missing crop' });
+  db.prepare('INSERT OR REPLACE INTO bed_layout (bed_id, row, col, crop) VALUES (?, ?, ?, ?)')
+    .run(req.params.id, req.params.row, req.params.col, crop.trim());
+  res.json({ ok: true });
+});
+
+app.delete('/api/beds/:id/layout/:row/:col', (req, res) => {
+  db.prepare('DELETE FROM bed_layout WHERE bed_id = ? AND row = ? AND col = ?')
+    .run(req.params.id, req.params.row, req.params.col);
+  res.json({ ok: true });
+});
+
+app.delete('/api/beds/:id/layout', (req, res) => {
+  db.prepare('DELETE FROM bed_layout WHERE bed_id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 if (process.env.NODE_ENV === 'production') {
