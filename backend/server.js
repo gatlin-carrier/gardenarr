@@ -450,12 +450,15 @@ app.post('/api/schedule', async (req, res) => {
 });
 
 async function companionForCrops(cropList, settings) {
+  if (!settings.api_key && !settings.ollama_base_url) {
+    throw new Error('No API key configured. Please set your API key in Settings.');
+  }
   const text = await chat(
     `You are a gardening expert specializing in companion planting. Analyze ALL possible pairings among these crops: ${cropList.join(', ')}.
 
 IMPORTANT: You MUST evaluate EVERY possible pair of crops. For ${cropList.length} crops that means ${cropList.length * (cropList.length - 1) / 2} pairs. Do not skip any pairs. Pay special attention to harmful relationships (e.g. potatoes and tomatoes are both nightshades and should not be planted together).
 
-Reply ONLY with valid JSON, no markdown, no extra text:
+Reply ONLY with valid JSON, no markdown fences, no extra text:
 {
   "pairs": [
     {
@@ -484,7 +487,12 @@ Reply ONLY with valid JSON, no markdown, no extra text:
     { maxTokens: 4096 }
   );
   const raw = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error('Failed to parse companion JSON:', raw.slice(0, 200));
+    throw new Error('AI returned invalid JSON. Try again.');
+  }
 }
 
 // Build batches so every pair of crops appears in at least one batch.
@@ -535,9 +543,23 @@ app.post('/api/companion', async (req, res) => {
       return res.json(await companionForCrops(crops, settings));
     }
 
-    // Chunk into overlapping batches and run in parallel
+    // Chunk into batches and run sequentially to avoid rate limits
     const batches = buildCompanionBatches(crops, BATCH_SIZE);
-    const results = await Promise.all(batches.map(b => companionForCrops(b, settings)));
+    const results = [];
+    const errors = [];
+    for (let i = 0; i < batches.length; i++) {
+      try {
+        const r = await companionForCrops(batches[i], settings);
+        results.push(r);
+      } catch (e) {
+        console.error(`Companion batch ${i + 1}/${batches.length} failed:`, e.message);
+        errors.push(e.message);
+      }
+    }
+
+    if (!results.length) {
+      throw new Error(errors[0] || 'All companion batches failed');
+    }
 
     // Merge results, deduplicating pairs by sorted crop key
     const pairMap = new Map();
@@ -574,7 +596,7 @@ app.post('/api/companion', async (req, res) => {
       tips: [...new Set(allTips)],
     });
   } catch (e) {
-    console.error(e);
+    console.error('Companion analysis error:', e);
     res.status(500).json({ error: e.message });
   }
 });
