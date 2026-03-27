@@ -49,7 +49,7 @@ function getCanvasPoint(svgEl, e) {
 
 // ─── BedGrid (click/drag crop painter) ──────────────────────────────────────
 
-function BedGrid({ bed, layout, selectedCrop, onCellChange }) {
+function BedGrid({ bed, layout, selectedCrop, onCellChange, onCellSelect, selectedCell }) {
   const painting = useRef(false)
   const cols = Math.max(1, Math.round(bed.width_ft))
   const rows = Math.max(1, Math.round(bed.length_ft))
@@ -74,6 +74,12 @@ function BedGrid({ bed, layout, selectedCrop, onCellChange }) {
     }
   }
 
+  function handleClick(row, col) {
+    painting.current = true
+    applyCell(row, col)
+    if (onCellSelect) onCellSelect(row, col)
+  }
+
   return (
     <div
       className={`bed-grid ${selectedCrop ? 'mode-paint' : 'mode-erase'}`}
@@ -84,15 +90,16 @@ function BedGrid({ bed, layout, selectedCrop, onCellChange }) {
         Array.from({ length: cols }, (_, col) => {
           const crop = layout[`${row},${col}`]
           const color = crop ? cropColor(crop) : undefined
+          const isSelected = selectedCell && selectedCell.row === row && selectedCell.col === col
           return (
             <div
               key={`${row}-${col}`}
-              className={`bed-cell ${crop ? 'occupied' : 'empty'}`}
+              className={`bed-cell ${crop ? 'occupied' : 'empty'}${isSelected ? ' cell-selected' : ''}`}
               style={color ? { background: color, borderColor: color } : {}}
-              title={crop || (selectedCrop ? `Place ${selectedCrop}` : 'Click to erase')}
-              onMouseDown={() => { painting.current = true; applyCell(row, col) }}
+              title={crop || (selectedCrop ? `Place ${selectedCrop}` : 'Click to select')}
+              onMouseDown={() => handleClick(row, col)}
               onMouseEnter={() => { if (painting.current) applyCell(row, col) }}
-              onTouchStart={e => { e.preventDefault(); painting.current = true; applyCell(row, col) }}
+              onTouchStart={e => { e.preventDefault(); handleClick(row, col) }}
             >
               {crop && (
                 <span className="cell-label">
@@ -375,6 +382,42 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     }
   }
 
+  // ── quick-add search ─────────────────────────────────────────────────────
+
+  const [quickSearch, setQuickSearch]     = useState('')
+  const [selectedCell, setSelectedCell]   = useState(null) // { row, col }
+
+  function handleCellSelect(row, col) {
+    setSelectedCell({ row, col })
+    setQuickSearch('')
+  }
+
+  function quickAddCrop(crop) {
+    if (!selectedCell || !selectedBed) return
+    handleCellChange(selectedCell.row, selectedCell.col, crop)
+    // Move to next empty cell
+    const cols = Math.max(1, Math.round(selectedBed.width_ft))
+    const rows = Math.max(1, Math.round(selectedBed.length_ft))
+    const layout = layouts[selectedBedId] || {}
+    let { row: r, col: c } = selectedCell
+    c++
+    while (r < rows) {
+      while (c < cols) {
+        if (!layout[`${r},${c}`]) { setSelectedCell({ row: r, col: c }); setQuickSearch(''); return }
+        c++
+      }
+      c = 0; r++
+    }
+    setSelectedCell(null)
+    setQuickSearch('')
+  }
+
+  const quickResults = quickSearch.trim()
+    ? [...savedCrops, ...(!savedCrops.some(c => c.toLowerCase() === quickSearch.trim().toLowerCase()) ? [quickSearch.trim()] : [])]
+        .filter(c => c.toLowerCase().includes(quickSearch.toLowerCase()))
+        .slice(0, 8)
+    : []
+
   // ── render ────────────────────────────────────────────────────────────────
 
   const bgUrl = garden.bg_image ? `/uploads/${garden.bg_image}` : null
@@ -478,135 +521,205 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
         </div>
       )}
 
-      {/* ── SVG garden canvas ── */}
-      {beds.length > 0 || !showNewBed ? (
-        <div className="canvas-wrap">
-          {beds.length === 0 && (
-            <div className="canvas-empty">
-              <p>No beds yet — add one above to get started.</p>
+      {/* ── Main layout: canvas left + panel right ── */}
+      <div className="layout-split">
+
+        {/* ── Left: SVG canvas ── */}
+        <div className="layout-canvas-col">
+          {beds.length > 0 || !showNewBed ? (
+            <div className="canvas-wrap">
+              {beds.length === 0 && (
+                <div className="canvas-empty">
+                  <p>No beds yet — add one above to get started.</p>
+                </div>
+              )}
+              <svg
+                ref={svgRef}
+                className="garden-svg"
+                viewBox={`${-MARGIN} ${-MARGIN} ${W + MARGIN * 2} ${L + MARGIN * 2}`}
+                onMouseMove={onSvgMouseMove}
+                onMouseUp={onSvgMouseUp}
+                onMouseLeave={onSvgMouseUp}
+              >
+                {bgUrl && (
+                  <image href={bgUrl} x={0} y={0} width={W} height={L}
+                    preserveAspectRatio="xMidYMid slice" className="svg-bg-image" />
+                )}
+                <rect x={0} y={0} width={W} height={L} className="garden-boundary" />
+                {Array.from({ length: Math.floor(W) - 1 }, (_, i) => (
+                  <line key={`v${i}`} x1={i+1} y1={0} x2={i+1} y2={L} className="grid-line" />
+                ))}
+                {Array.from({ length: Math.floor(L) - 1 }, (_, i) => (
+                  <line key={`h${i}`} x1={0} y1={i+1} x2={W} y2={i+1} className="grid-line" />
+                ))}
+                <text x={W / 2} y={-0.35} className="compass-n">N</text>
+                <text x={W / 2} y={L + 0.7} className="compass-s">S</text>
+                <text x={W + 0.2} y={L / 2} className="dim-label" dominantBaseline="middle">{L}ft</text>
+                <text x={W / 2} y={-0.85} className="dim-label" textAnchor="middle">{W}ft</text>
+                {beds.map(bed => {
+                  const x = bed.x_ft || 0
+                  const y = bed.y_ft || 0
+                  const bw = bed.width_ft || 4
+                  const bl = bed.length_ft || 8
+                  const isSelected = bed.id === selectedBedId
+                  const bedLayout = layouts[bed.id] || {}
+                  return (
+                    <g
+                      key={bed.id}
+                      className={`bed-group${isSelected ? ' bed-selected' : ''}`}
+                      transform={`translate(${x},${y})`}
+                      onMouseDown={e => onBedPointerDown(e, bed)}
+                      style={{ cursor: 'grab' }}
+                    >
+                      <rect width={bw} height={bl} className="bed-rect" rx={0.12} />
+                      <text x={bw / 2} y={bl / 2 - 0.15} className="bed-label" textAnchor="middle" dominantBaseline="middle">
+                        {bed.name}
+                      </text>
+                      <BedSwatches bedId={bed.id} layout={bedLayout} bw={bw} bl={bl} />
+                    </g>
+                  )
+                })}
+              </svg>
+              <div className="canvas-hint">Drag beds to reposition · Click a bed to edit in the panel</div>
             </div>
-          )}
-          <svg
-            ref={svgRef}
-            className="garden-svg"
-            viewBox={`${-MARGIN} ${-MARGIN} ${W + MARGIN * 2} ${L + MARGIN * 2}`}
-            onMouseMove={onSvgMouseMove}
-            onMouseUp={onSvgMouseUp}
-            onMouseLeave={onSvgMouseUp}
-          >
-            {/* Background image */}
-            {bgUrl && (
-              <image href={bgUrl} x={0} y={0} width={W} height={L}
-                preserveAspectRatio="xMidYMid slice" className="svg-bg-image" />
+          ) : null}
+        </div>
+
+        {/* ── Right: edit panel ── */}
+        {selectedBed && (
+          <div className="layout-panel-col">
+            {/* Bed selector tabs */}
+            {beds.length > 1 && (
+              <div className="panel-bed-tabs">
+                {beds.map(b => (
+                  <button
+                    key={b.id}
+                    className={`panel-bed-tab ${b.id === selectedBedId ? 'active' : ''}`}
+                    onClick={() => setSelectedBedId(b.id)}
+                  >
+                    {b.name}
+                  </button>
+                ))}
+              </div>
             )}
 
-            {/* Garden boundary */}
-            <rect x={0} y={0} width={W} height={L} className="garden-boundary" />
-
-            {/* Grid lines (1ft) */}
-            {Array.from({ length: Math.floor(W) - 1 }, (_, i) => (
-              <line key={`v${i}`} x1={i+1} y1={0} x2={i+1} y2={L} className="grid-line" />
-            ))}
-            {Array.from({ length: Math.floor(L) - 1 }, (_, i) => (
-              <line key={`h${i}`} x1={0} y1={i+1} x2={W} y2={i+1} className="grid-line" />
-            ))}
-
-            {/* Compass N */}
-            <text x={W / 2} y={-0.35} className="compass-n">N</text>
-            <text x={W / 2} y={L + 0.7} className="compass-s">S</text>
-
-            {/* Dimension labels */}
-            <text x={W + 0.2} y={L / 2} className="dim-label" dominantBaseline="middle">{L}ft</text>
-            <text x={W / 2} y={-0.85} className="dim-label" textAnchor="middle">{W}ft</text>
-
-            {/* Beds */}
-            {beds.map(bed => {
-              const x = bed.x_ft || 0
-              const y = bed.y_ft || 0
-              const bw = bed.width_ft || 4
-              const bl = bed.length_ft || 8
-              const isSelected = bed.id === selectedBedId
-              const bedLayout = layouts[bed.id] || {}
-              return (
-                <g
-                  key={bed.id}
-                  className={`bed-group${isSelected ? ' bed-selected' : ''}`}
-                  transform={`translate(${x},${y})`}
-                  onMouseDown={e => onBedPointerDown(e, bed)}
-                  style={{ cursor: 'grab' }}
-                >
-                  <rect width={bw} height={bl} className="bed-rect" rx={0.12} />
-                  <text x={bw / 2} y={bl / 2 - 0.15} className="bed-label" textAnchor="middle" dominantBaseline="middle">
-                    {bed.name}
-                  </text>
-                  <BedSwatches bedId={bed.id} layout={bedLayout} bw={bw} bl={bl} />
-                </g>
-              )
-            })}
-          </svg>
-          <div className="canvas-hint">Drag beds to reposition · Click a bed to paint crops below</div>
-        </div>
-      ) : null}
-
-      {/* ── Selected bed paint section ── */}
-      {selectedBed && (
-        <div className="paint-section">
-          <div className="paint-header">
-            {editingBed ? (
-              <div className="bed-edit-form">
-                <div className="bed-edit-row">
-                  <div className="bed-edit-field bed-edit-name">
-                    <label>Bed name</label>
-                    <input
-                      value={bedDraft.name}
-                      onChange={e => setBedDraft(d => ({ ...d, name: e.target.value }))}
-                      onKeyDown={e => e.key === 'Enter' && saveBedEdit()}
-                      autoFocus
-                    />
+            {/* Bed info / edit */}
+            <div className="panel-section">
+              {editingBed ? (
+                <div className="bed-edit-form">
+                  <div className="bed-edit-row">
+                    <div className="bed-edit-field bed-edit-name">
+                      <label>Bed name</label>
+                      <input
+                        value={bedDraft.name}
+                        onChange={e => setBedDraft(d => ({ ...d, name: e.target.value }))}
+                        onKeyDown={e => e.key === 'Enter' && saveBedEdit()}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="bed-edit-field">
+                      <label>W (ft)</label>
+                      <input type="number" min={1} max={50} value={bedDraft.width_ft}
+                        onChange={e => setBedDraft(d => ({ ...d, width_ft: e.target.value }))} />
+                    </div>
+                    <div className="bed-edit-field">
+                      <label>L (ft)</label>
+                      <input type="number" min={1} max={50} value={bedDraft.length_ft}
+                        onChange={e => setBedDraft(d => ({ ...d, length_ft: e.target.value }))} />
+                    </div>
                   </div>
-                  <div className="bed-edit-field">
-                    <label>Width (ft)</label>
-                    <input type="number" min={1} max={50} value={bedDraft.width_ft}
-                      onChange={e => setBedDraft(d => ({ ...d, width_ft: e.target.value }))} />
-                  </div>
-                  <div className="bed-edit-field">
-                    <label>Length (ft)</label>
-                    <input type="number" min={1} max={50} value={bedDraft.length_ft}
-                      onChange={e => setBedDraft(d => ({ ...d, length_ft: e.target.value }))} />
+                  <div className="bed-edit-actions">
+                    <button className="btn-primary btn-sm" onClick={saveBedEdit} disabled={bedSaving || !bedDraft.name.trim()}>
+                      {bedSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button className="btn-ghost btn-sm" onClick={() => setEditingBed(false)}>Cancel</button>
+                    <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)} style={{ marginLeft: 'auto' }}>Delete</button>
                   </div>
                 </div>
-                <div className="bed-edit-actions">
-                  <button className="btn-primary btn-sm" onClick={saveBedEdit} disabled={bedSaving || !bedDraft.name.trim()}>
-                    {bedSaving ? 'Saving…' : 'Save'}
-                  </button>
-                  <button className="btn-ghost btn-sm" onClick={() => setEditingBed(false)}>Cancel</button>
-                  {Object.keys(activeLayout).length > 0 && (
-                    <button className="btn-ghost btn-sm" onClick={clearLayout} style={{ marginLeft: 'auto' }}>Clear crops</button>
-                  )}
-                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete bed</button>
+              ) : (
+                <div className="panel-bed-header">
+                  <div>
+                    <span className="paint-title">{selectedBed.name}</span>
+                    <span className="paint-subtitle">{selectedBed.width_ft} × {selectedBed.length_ft} ft · {Math.round(selectedBed.width_ft * selectedBed.length_ft)} sq ft</span>
+                  </div>
+                  <div className="panel-bed-actions">
+                    <button className="btn-ghost btn-sm" onClick={startBedEdit}>Edit</button>
+                    {Object.keys(activeLayout).length > 0 && (
+                      <button className="btn-ghost btn-sm" onClick={clearLayout}>Clear</button>
+                    )}
+                    <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Bed grid */}
+            <div className="panel-section">
+              <div className="panel-section-label">Bed grid</div>
+              <div className="grid-compass"><span>N</span></div>
+              <div className="grid-scroll">
+                <BedGrid
+                  bed={selectedBed}
+                  layout={activeLayout}
+                  selectedCrop={selectedCrop}
+                  onCellChange={handleCellChange}
+                  onCellSelect={handleCellSelect}
+                  selectedCell={selectedCell}
+                />
+              </div>
+              {placedCrops.length > 0 && (
+                <div className="grid-legend">
+                  {placedCrops.map(crop => (
+                    <span key={crop} className="legend-item">
+                      <span className="legend-dot" style={{ background: cropColor(crop) }} />
+                      {crop}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Quick add (when cell selected) */}
+            {selectedCell && (
+              <div className="panel-section panel-quick-add">
+                <div className="panel-section-label">
+                  Quick add to plot ({selectedCell.row + 1}, {selectedCell.col + 1})
+                  <button className="btn-ghost btn-sm" onClick={() => setSelectedCell(null)} style={{ marginLeft: 'auto', padding: '2px 6px' }}>✕</button>
+                </div>
+                <input
+                  className="quick-search-input"
+                  placeholder="Search plants..."
+                  value={quickSearch}
+                  onChange={e => setQuickSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && quickResults.length) quickAddCrop(quickResults[0]) }}
+                  autoFocus
+                />
+                <div className="quick-results">
+                  {quickSearch.trim() === '' && savedCrops.slice(0, 6).map(crop => {
+                    const cat = getCropCat(crop)
+                    return (
+                      <button key={crop} className="quick-result-item" onClick={() => quickAddCrop(crop)}>
+                        <span>{cat.emoji}</span> {crop}
+                      </button>
+                    )
+                  })}
+                  {quickResults.map(crop => {
+                    const cat = getCropCat(crop)
+                    const isSaved = savedCrops.includes(crop)
+                    return (
+                      <button key={crop} className="quick-result-item" onClick={() => quickAddCrop(crop)}>
+                        <span>{cat.emoji}</span> {crop}
+                        {!isSaved && <span className="quick-result-custom">custom</span>}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
-            ) : (
-              <>
-                <div>
-                  <span className="paint-title">{selectedBed.name}</span>
-                  <span className="paint-subtitle">{selectedBed.width_ft} × {selectedBed.length_ft} ft · {selectedBed.width_ft * selectedBed.length_ft} sq ft</span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn-ghost btn-sm" onClick={startBedEdit}>Edit bed</button>
-                  {Object.keys(activeLayout).length > 0 && (
-                    <button className="btn-ghost btn-sm" onClick={clearLayout}>Clear crops</button>
-                  )}
-                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteBed(selectedBed.id)}>Delete</button>
-                </div>
-              </>
             )}
-          </div>
 
-          <div className="paint-workspace">
-            {/* Crop palette */}
-            <div className="crop-palette">
-              <div className="palette-section-label">Paint with</div>
+            {/* Paint palette */}
+            <div className="panel-section">
+              <div className="panel-section-label">Paint tool</div>
               <button
                 className={`palette-eraser ${!selectedCrop ? 'active' : ''}`}
                 onClick={() => setSelectedCrop(null)}
@@ -614,7 +727,6 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 ✕ Eraser
               </button>
 
-              {/* Compact planting cards */}
               {(() => {
                 const seen = new Set()
                 const unique = plantings.filter(p => { if (seen.has(p.crop)) return false; seen.add(p.crop); return true })
@@ -672,32 +784,9 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 )
               })()}
             </div>
-
-            {/* Grid */}
-            <div className="grid-area">
-              <div className="grid-compass"><span>N</span></div>
-              <div className="grid-scroll">
-                <BedGrid
-                  bed={selectedBed}
-                  layout={activeLayout}
-                  selectedCrop={selectedCrop}
-                  onCellChange={handleCellChange}
-                />
-              </div>
-              {placedCrops.length > 0 && (
-                <div className="grid-legend">
-                  {placedCrops.map(crop => (
-                    <span key={crop} className="legend-item">
-                      <span className="legend-dot" style={{ background: cropColor(crop) }} />
-                      {crop}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

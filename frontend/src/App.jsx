@@ -10,6 +10,7 @@ export default function App() {
   const [activeGarden, setActiveGarden] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const { status: pushStatus, loading: pushLoading, toggle: togglePush } = usePushNotifications()
 
   // PWA: install prompt
@@ -128,16 +129,16 @@ export default function App() {
         <div className="pwa-toast">App ready to work offline</div>
       )}
 
-      <div className="app-layout">
-        <aside className="sidebar">
+      <div className={`app-layout ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
+        <aside className={`sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
           <div className="sidebar-header">
             <div className="sidebar-header-top">
-              <h1 className="logo">Gardenarr</h1>
+              {sidebarOpen && <h1 className="logo">Gardenarr</h1>}
               <div style={{ display: 'flex', gap: 4 }}>
-                {installPrompt && (
+                {installPrompt && sidebarOpen && (
                   <button className="settings-btn" onClick={triggerInstall} title="Install app">⬇</button>
                 )}
-                {pushStatus !== 'unsupported' && (
+                {pushStatus !== 'unsupported' && sidebarOpen && (
                   <button
                     className={`settings-btn ${pushStatus === 'subscribed' ? 'settings-btn--active' : ''}`}
                     onClick={togglePush}
@@ -149,20 +150,39 @@ export default function App() {
                     }
                   >🔔</button>
                 )}
-                <button className="settings-btn" onClick={() => setShowSettings(true)} title="LLM settings">⚙</button>
+                {sidebarOpen && <button className="settings-btn" onClick={() => setShowSettings(true)} title="LLM settings">⚙</button>}
+                <button className="settings-btn sidebar-toggle" onClick={() => setSidebarOpen(s => !s)} title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
+                  {sidebarOpen ? '◀' : '▶'}
+                </button>
               </div>
             </div>
-            <p className="logo-sub">AI-powered sowing schedules</p>
+            {sidebarOpen && <p className="logo-sub">AI-powered sowing schedules</p>}
           </div>
-          <GardenList
-            gardens={gardens}
-            activeGarden={activeGarden}
-            onSelect={setActiveGarden}
-            onCreate={createGarden}
-            onDelete={deleteGarden}
-            onSetDefault={setDefaultGarden}
-            onReorder={reorderGardens}
-          />
+          {sidebarOpen && (
+            <GardenList
+              gardens={gardens}
+              activeGarden={activeGarden}
+              onSelect={setActiveGarden}
+              onCreate={createGarden}
+              onDelete={deleteGarden}
+              onSetDefault={setDefaultGarden}
+              onReorder={reorderGardens}
+            />
+          )}
+          {!sidebarOpen && (
+            <div className="sidebar-mini-gardens">
+              {gardens.map(g => (
+                <button
+                  key={g.id}
+                  className={`sidebar-mini-item ${activeGarden?.id === g.id ? 'active' : ''}`}
+                  onClick={() => setActiveGarden(g)}
+                  title={g.name}
+                >
+                  {g.name.charAt(0).toUpperCase()}
+                </button>
+              ))}
+            </div>
+          )}
         </aside>
         <main className="main-content">
           {activeGarden ? (

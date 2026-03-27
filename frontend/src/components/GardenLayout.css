@@ -262,24 +262,140 @@
   text-align: center;
 }
 
-/* ── Paint section ──────────────────────────────────────────────── */
+/* ── Split layout: canvas + panel ──────────────────────────────── */
 
-.paint-section {
+.layout-split {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1rem;
+  align-items: start;
+}
+
+.layout-canvas-col {
+  min-width: 0;
+}
+
+.layout-panel-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  background: var(--surface);
+  padding: 12px;
 }
 
-.paint-header {
+.panel-bed-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-bed-tab {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.panel-bed-tab:hover { border-color: var(--green-400); color: var(--green-800); background: var(--green-50); }
+.panel-bed-tab.active { background: var(--green-600); border-color: var(--green-600); color: white; }
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.panel-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 6px;
 }
+
+.panel-bed-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-bed-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Quick add */
+.panel-quick-add {
+  padding: 10px;
+  background: var(--green-50);
+  border: 1px solid var(--green-100);
+  border-radius: var(--radius-sm);
+}
+
+.quick-search-input {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.quick-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.quick-result-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+.quick-result-item:hover { background: var(--green-100); }
+
+.quick-result-custom {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+
+/* Cell selected highlight */
+.bed-cell.cell-selected {
+  outline: 2px solid var(--green-600);
+  outline-offset: -1px;
+  z-index: 2;
+  position: relative;
+}
+
+/* ── Paint section (now inside panel) ──────────────────────────── */
 
 .paint-title {
   font-size: 15px;
@@ -340,7 +456,7 @@
   display: flex;
   gap: 1.25rem;
   align-items: flex-start;
-  padding: 1rem;
+  padding: 0;
 }
 
 /* ── Crop palette ───────────────────────────────────────────────── */
@@ -351,8 +467,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  position: sticky;
-  top: 1rem;
 }
 
 .palette-section-label {
@@ -603,11 +717,15 @@
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 
+@media (max-width: 900px) {
+  .layout-split { grid-template-columns: 1fr; }
+  .layout-panel-col { position: static; max-height: none; }
+}
+
 @media (max-width: 700px) {
   :root { --cell-size: 36px; }
   .canvas-toolbar { flex-direction: column; align-items: flex-start; }
-  .paint-workspace { flex-direction: column; }
-  .crop-palette { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+  .crop-palette { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
   .palette-section-label, .palette-group-label { display: none; }
   .palette-card { width: auto; flex: 0 1 auto; }
   .palette-custom-row { width: 100%; }
