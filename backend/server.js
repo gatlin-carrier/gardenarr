@@ -1056,18 +1056,13 @@ ${crops.length ? `All crops in this garden: ${crops.join(', ')}` : 'No crops sav
 ${unplacedCrops.length ? `Crops NOT yet placed in any bed: ${unplacedCrops.join(', ')}` : 'All crops are already placed in beds.'}
 
 Tasks:
-1. POSITION beds: suggest x_ft, y_ft for each bed. Taller/sun-loving crops (corn, tomatoes, sunflowers) on the north side. Leave 2+ ft between beds. Keep beds inside the boundary.
-2. DISTRIBUTE crops: assign every unplaced crop to a bed and grid cell position (row, col). Consider:
-   - Companion planting (good neighbors together, bad neighbors in separate beds)
-   - Plant spacing (larger plants like tomatoes need more cells, herbs can share)
-   - Sun needs (group similar light requirements)
-   - Don't overwrite existing cell assignments — only fill empty cells
-   - Each cell is ~1 sq ft. A tomato might need 2-4 cells, herbs 1 cell, etc.
+1. POSITION beds: suggest x_ft, y_ft for each bed. Taller/sun-loving crops on the north side. Leave 2+ ft gaps. Keep beds inside the boundary.
+2. DISTRIBUTE unplaced crops: assign each unplaced crop to a bed_id and specify how many cells it needs (1 sq ft per cell). Consider companion planting and spacing. I will fill in the actual grid cells programmatically.
 
 Return ONLY valid JSON, no markdown:
 {
   "beds": [{"id": number, "x_ft": number, "y_ft": number}],
-  "cell_assignments": [{"bed_id": number, "row": number, "col": number, "crop": "string"}],
+  "crop_assignments": [{"bed_id": number, "crop": "string", "cells": number}],
   "tips": ["tip1", "tip2"]
 }`;
 
@@ -1075,27 +1070,78 @@ Return ONLY valid JSON, no markdown:
     const settings = getLLMSettings();
     req.setTimeout(600000);
     res.setTimeout(600000);
-    const text = await chat(prompt, settings, { maxTokens: 4096 });
-    const data = JSON.parse(text.replace(/```json|```/g, '').trim());
+    const text = await chat(prompt, settings, { maxTokens: 16384 });
+    let raw = text.replace(/```json|```/g, '').trim();
 
-    // Persist cell assignments to bed_layout
-    if (data.cell_assignments?.length) {
+    // Attempt to repair truncated JSON — the AI may run out of tokens mid-array
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (parseErr) {
+      console.log('AI arrange JSON parse failed, attempting repair...');
+      // Try closing any unclosed arrays/objects
+      let repaired = raw;
+      // Remove trailing incomplete object (e.g. `, {"bed_id": 1, "row"`)
+      repaired = repaired.replace(/,\s*\{[^}]*$/, '');
+      // Remove trailing comma
+      repaired = repaired.replace(/,\s*$/, '');
+      // Count unclosed brackets and close them
+      const opens = (repaired.match(/[\[{]/g) || []);
+      const closes = (repaired.match(/[\]}]/g) || []);
+      let needed = opens.length - closes.length;
+      // Walk backwards to determine correct closing order
+      const stack = [];
+      for (const ch of repaired) {
+        if (ch === '{' || ch === '[') stack.push(ch);
+        else if (ch === '}' || ch === ']') stack.pop();
+      }
+      while (stack.length) {
+        const open = stack.pop();
+        repaired += open === '{' ? '}' : ']';
+      }
+      try {
+        data = JSON.parse(repaired);
+        console.log('AI arrange JSON repaired successfully');
+      } catch (e2) {
+        throw new Error('AI returned invalid JSON that could not be repaired. Try again with fewer crops.');
+      }
+    }
+
+    // Distribute crops into bed cells programmatically based on AI assignments
+    if (data.crop_assignments?.length) {
       const upsert = db.prepare(
         'INSERT OR REPLACE INTO bed_layout (bed_id, row, col, crop) VALUES (?, ?, ?, ?)'
       );
       const validBedIds = new Set(beds.map(b => b.id));
+
+      // Build a map of occupied cells per bed
+      const occupied = {};
+      for (const bed of beds) {
+        occupied[bed.id] = new Set(
+          (existingLayouts[bed.id] || []).map(c => `${c.row},${c.col}`)
+        );
+      }
+
       let placed = 0;
-      for (const a of data.cell_assignments) {
+      for (const a of data.crop_assignments) {
         if (!validBedIds.has(a.bed_id) || !a.crop?.trim()) continue;
         const bed = beds.find(b => b.id === a.bed_id);
         const maxCols = Math.max(1, Math.round(bed.width_ft || 4));
         const maxRows = Math.max(1, Math.round(bed.length_ft || 8));
-        if (a.row < 0 || a.row >= maxRows || a.col < 0 || a.col >= maxCols) continue;
-        // Don't overwrite existing cells
-        const existing = (existingLayouts[a.bed_id] || []).find(c => c.row === a.row && c.col === a.col);
-        if (existing) continue;
-        upsert.run(a.bed_id, a.row, a.col, a.crop.trim());
-        placed++;
+        const cellsNeeded = Math.max(1, Math.min(a.cells || 1, maxCols * maxRows));
+
+        // Fill next available empty cells in this bed
+        let filled = 0;
+        for (let r = 0; r < maxRows && filled < cellsNeeded; r++) {
+          for (let c = 0; c < maxCols && filled < cellsNeeded; c++) {
+            const key = `${r},${c}`;
+            if (occupied[a.bed_id].has(key)) continue;
+            upsert.run(a.bed_id, r, c, a.crop.trim());
+            occupied[a.bed_id].add(key);
+            filled++;
+            placed++;
+          }
+        }
       }
       console.log(`AI placed ${placed} crops into bed cells`);
     }
