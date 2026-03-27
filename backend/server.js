@@ -6,7 +6,7 @@ const cron = require('node-cron');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-const { chat } = require('./llm');
+const { chat, chatWithTools } = require('./llm');
 
 const app = express();
 app.use(cors());
@@ -106,6 +106,14 @@ db.exec(`
     data TEXT NOT NULL,
     cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(garden_id, crop_key)
+  );
+  CREATE TABLE IF NOT EXISTS garden_chat (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    garden_id INTEGER REFERENCES gardens(id),
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tool_calls TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS garden_fences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -733,6 +741,7 @@ app.delete('/api/gardens/:id', (req, res) => {
   db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM garden_fences WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM garden_features WHERE garden_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM garden_chat WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM gardens WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -1161,6 +1170,358 @@ Return ONLY valid JSON, no markdown:
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Garden AI Chatbot (tool-use based)
+// ---------------------------------------------------------------------------
+
+const GARDEN_CHAT_TOOLS = [
+  {
+    name: 'list_plantings',
+    description: 'List all crops/plantings saved in this garden with their schedule info and status.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'add_planting',
+    description: 'Add a new crop to the garden planting list. Use this when the user wants to grow something new.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        crop: { type: 'string', description: 'Crop name (e.g. "Tomatoes")' },
+        sow_indoors: { type: 'string', description: 'When to start seeds indoors (optional)' },
+        transplant_or_direct_sow: { type: 'string', description: 'When to transplant or direct sow' },
+        harvest: { type: 'string', description: 'Expected harvest time' },
+        tip: { type: 'string', description: 'Growing tip' },
+        notes: { type: 'string', description: 'Additional notes' },
+      },
+      required: ['crop'],
+    },
+  },
+  {
+    name: 'remove_planting',
+    description: 'Remove a crop from the garden planting list by its ID.',
+    input_schema: {
+      type: 'object',
+      properties: { planting_id: { type: 'number', description: 'ID of the planting to remove' } },
+      required: ['planting_id'],
+    },
+  },
+  {
+    name: 'list_beds',
+    description: 'List all beds in the garden with their dimensions, positions, and what crops are planted in their grid cells.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'create_bed',
+    description: 'Create a new garden bed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Bed name' },
+        width_ft: { type: 'number', description: 'Width in feet (1-50)' },
+        length_ft: { type: 'number', description: 'Length in feet (1-50)' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'assign_crop_to_bed',
+    description: 'Place a crop into specific grid cell(s) of a bed. Each cell is ~1 sq ft.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bed_id: { type: 'number', description: 'Bed ID' },
+        crop: { type: 'string', description: 'Crop name to place' },
+        cells: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              row: { type: 'number' },
+              col: { type: 'number' },
+            },
+          },
+          description: 'Array of {row, col} grid positions to fill',
+        },
+      },
+      required: ['bed_id', 'crop', 'cells'],
+    },
+  },
+  {
+    name: 'remove_crop_from_bed',
+    description: 'Remove crops from specific grid cells in a bed, or clear all cells.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bed_id: { type: 'number', description: 'Bed ID' },
+        cells: {
+          type: 'array',
+          items: { type: 'object', properties: { row: { type: 'number' }, col: { type: 'number' } } },
+          description: 'Specific cells to clear. Omit to clear the entire bed.',
+        },
+      },
+      required: ['bed_id'],
+    },
+  },
+  {
+    name: 'move_bed',
+    description: 'Reposition a bed on the garden canvas.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        bed_id: { type: 'number' },
+        x_ft: { type: 'number', description: 'New X position in feet' },
+        y_ft: { type: 'number', description: 'New Y position in feet' },
+      },
+      required: ['bed_id', 'x_ft', 'y_ft'],
+    },
+  },
+  {
+    name: 'get_plant_info',
+    description: 'Get detailed growing information about a specific plant/crop, including spacing, sun needs, pests, harvest tips, etc. Use this to answer gardening questions or recommend plants.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        crop: { type: 'string', description: 'Plant/crop name to look up' },
+      },
+      required: ['crop'],
+    },
+  },
+  {
+    name: 'get_companion_info',
+    description: 'Check companion planting relationships between specific crops. Returns which are beneficial, harmful, or neutral neighbors.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        crops: { type: 'array', items: { type: 'string' }, description: 'List of crop names to check relationships between' },
+      },
+      required: ['crops'],
+    },
+  },
+  {
+    name: 'recommend_plants',
+    description: 'Recommend plants based on user criteria. Use your gardening expertise plus the garden zone/location to suggest interesting plants. Consider what they already grow.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        criteria: { type: 'string', description: 'What the user is looking for (e.g. "herbs for shade", "pollinator-friendly flowers", "easy vegetables for beginners")' },
+        existing_crops: { type: 'array', items: { type: 'string' }, description: 'Crops already in the garden (for companion consideration)' },
+      },
+      required: ['criteria'],
+    },
+  },
+];
+
+function buildGardenChatSystem(garden) {
+  return `You are a friendly, knowledgeable garden assistant for the garden "${garden.name}".
+${garden.zone ? `Garden zone: ${garden.zone}.` : ''}${garden.zipcode ? ` Zip code: ${garden.zipcode}.` : ''}
+Garden canvas: ${garden.layout_width_ft || 20}ft × ${garden.layout_length_ft || 20}ft.
+
+You help users plan, plant, and manage their garden. You can:
+- Add/remove crops from their planting list
+- Place crops into bed grid cells (each cell = ~1 sq ft)
+- Create and arrange beds on the canvas
+- Look up plant info and companion planting data
+- Recommend interesting plants to grow
+
+Be conversational and helpful. When you make changes, confirm what you did. When recommending plants, be specific about why they'd work in this garden. If a user asks about companion planting and you don't have the info cached, use the get_companion_info tool to look it up.
+
+Keep responses concise — a couple sentences plus any relevant details. Don't be overly verbose.`;
+}
+
+async function executeGardenTool(gardenId, name, input, settings) {
+  switch (name) {
+    case 'list_plantings': {
+      const rows = db.prepare('SELECT * FROM plantings WHERE garden_id = ? ORDER BY created_at DESC').all(gardenId);
+      return JSON.stringify(rows);
+    }
+    case 'add_planting': {
+      const result = db.prepare(
+        'INSERT INTO plantings (garden_id, crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(gardenId, input.crop, input.sow_indoors || null, input.transplant_or_direct_sow || null, input.harvest || null, input.tip || null, input.notes || '');
+      return JSON.stringify({ ok: true, id: result.lastInsertRowid, crop: input.crop });
+    }
+    case 'remove_planting': {
+      db.prepare('DELETE FROM plantings WHERE id = ? AND garden_id = ?').run(input.planting_id, gardenId);
+      return JSON.stringify({ ok: true });
+    }
+    case 'list_beds': {
+      const beds = db.prepare('SELECT * FROM beds WHERE garden_id = ?').all(gardenId);
+      const result = beds.map(b => {
+        const cells = db.prepare('SELECT row, col, crop FROM bed_layout WHERE bed_id = ?').all(b.id);
+        const crops = [...new Set(cells.map(c => c.crop))];
+        const cols = Math.max(1, Math.round(b.width_ft || 4));
+        const rows = Math.max(1, Math.round(b.length_ft || 8));
+        return { ...b, grid: `${cols}x${rows}`, total_cells: cols * rows, used_cells: cells.length, crops_placed: crops };
+      });
+      return JSON.stringify(result);
+    }
+    case 'create_bed': {
+      const result = db.prepare(
+        'INSERT INTO beds (garden_id, name, width_ft, length_ft) VALUES (?, ?, ?, ?)'
+      ).run(gardenId, input.name, input.width_ft || 4, input.length_ft || 8);
+      return JSON.stringify({ ok: true, id: result.lastInsertRowid, name: input.name });
+    }
+    case 'assign_crop_to_bed': {
+      const bed = db.prepare('SELECT * FROM beds WHERE id = ? AND garden_id = ?').get(input.bed_id, gardenId);
+      if (!bed) return JSON.stringify({ error: 'Bed not found' });
+      const upsert = db.prepare('INSERT OR REPLACE INTO bed_layout (bed_id, row, col, crop) VALUES (?, ?, ?, ?)');
+      let placed = 0;
+      const maxCols = Math.max(1, Math.round(bed.width_ft || 4));
+      const maxRows = Math.max(1, Math.round(bed.length_ft || 8));
+      for (const cell of (input.cells || [])) {
+        if (cell.row >= 0 && cell.row < maxRows && cell.col >= 0 && cell.col < maxCols) {
+          upsert.run(input.bed_id, cell.row, cell.col, input.crop);
+          placed++;
+        }
+      }
+      return JSON.stringify({ ok: true, placed, bed: bed.name });
+    }
+    case 'remove_crop_from_bed': {
+      const bed = db.prepare('SELECT * FROM beds WHERE id = ? AND garden_id = ?').get(input.bed_id, gardenId);
+      if (!bed) return JSON.stringify({ error: 'Bed not found' });
+      if (input.cells?.length) {
+        const del = db.prepare('DELETE FROM bed_layout WHERE bed_id = ? AND row = ? AND col = ?');
+        for (const cell of input.cells) del.run(input.bed_id, cell.row, cell.col);
+        return JSON.stringify({ ok: true, cleared: input.cells.length, bed: bed.name });
+      } else {
+        db.prepare('DELETE FROM bed_layout WHERE bed_id = ?').run(input.bed_id);
+        return JSON.stringify({ ok: true, cleared: 'all', bed: bed.name });
+      }
+    }
+    case 'move_bed': {
+      const bed = db.prepare('SELECT * FROM beds WHERE id = ? AND garden_id = ?').get(input.bed_id, gardenId);
+      if (!bed) return JSON.stringify({ error: 'Bed not found' });
+      db.prepare('UPDATE beds SET x_ft=?, y_ft=? WHERE id=?').run(input.x_ft, input.y_ft, input.bed_id);
+      return JSON.stringify({ ok: true, bed: bed.name, x_ft: input.x_ft, y_ft: input.y_ft });
+    }
+    case 'get_plant_info': {
+      const key = input.crop.trim().toLowerCase();
+      const cached = db.prepare('SELECT data FROM plant_info_cache WHERE crop = ?').get(key);
+      if (cached) return cached.data;
+      // Generate info via LLM
+      try {
+        const text = await chat(
+          `You are a gardening expert. Provide detailed growing information for: ${input.crop}.
+Reply ONLY with valid JSON:
+{"description":"overview","difficulty":"Easy|Moderate|Challenging","spacing_inches":12,"days_to_germination":"7-14","days_to_maturity":"60-80","sun":"Full sun","water":"needs","soil":"preferences","common_pests":["pest"],"common_diseases":["disease"],"companion_benefits":["tip"],"harvest_tips":"how to harvest","storage":"storage tips"}`,
+          settings, { maxTokens: 1024 }
+        );
+        const data = text.replace(/```json|```/g, '').trim();
+        JSON.parse(data); // validate
+        db.prepare('INSERT OR REPLACE INTO plant_info_cache (crop, data) VALUES (?, ?)').run(key, data);
+        return data;
+      } catch (e) {
+        return JSON.stringify({ error: e.message });
+      }
+    }
+    case 'get_companion_info': {
+      if (!input.crops?.length || input.crops.length < 2) return JSON.stringify({ error: 'Need at least 2 crops' });
+      try {
+        const text = await chat(
+          `Analyze companion planting relationships between: ${input.crops.join(', ')}.
+Only include beneficial and harmful pairs. Reply ONLY with JSON:
+{"pairs":[{"crop_a":"","crop_b":"","relationship":"beneficial|harmful","reason":"why"}]}`,
+          settings, { maxTokens: 2048 }
+        );
+        return text.replace(/```json|```/g, '').trim();
+      } catch (e) {
+        return JSON.stringify({ error: e.message });
+      }
+    }
+    case 'recommend_plants': {
+      // The AI itself is the recommendation engine — just return a prompt for it to reason with
+      return JSON.stringify({
+        note: 'Use your gardening expertise to recommend plants based on the criteria. Consider the garden zone, existing crops for companion planting, and the specific request.',
+        criteria: input.criteria,
+        existing_crops: input.existing_crops || [],
+      });
+    }
+    default:
+      return JSON.stringify({ error: `Unknown tool: ${name}` });
+  }
+}
+
+// Get chat history
+app.get('/api/gardens/:id/chat', (req, res) => {
+  const rows = db.prepare(
+    'SELECT id, role, content, tool_calls, created_at FROM garden_chat WHERE garden_id = ? ORDER BY created_at ASC'
+  ).all(req.params.id);
+  res.json(rows.map(r => ({
+    ...r,
+    tool_calls: r.tool_calls ? JSON.parse(r.tool_calls) : null,
+  })));
+});
+
+// Send a chat message
+app.post('/api/gardens/:id/chat', async (req, res) => {
+  const { message } = req.body;
+  if (!message?.trim()) return res.status(400).json({ error: 'Empty message' });
+
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Garden not found' });
+
+  req.setTimeout(600000);
+  res.setTimeout(600000);
+
+  try {
+    const settings = getLLMSettings();
+    if (!settings.api_key && !settings.ollama_base_url) {
+      return res.status(400).json({ error: 'No API key configured' });
+    }
+
+    // Load recent chat history (last 20 exchanges for context)
+    const history = db.prepare(
+      'SELECT role, content FROM garden_chat WHERE garden_id = ? ORDER BY created_at DESC LIMIT 40'
+    ).all(req.params.id).reverse();
+
+    // Build messages array for the API
+    const messages = history.map(h => ({ role: h.role, content: h.content }));
+    messages.push({ role: 'user', content: message.trim() });
+
+    // Save user message
+    db.prepare('INSERT INTO garden_chat (garden_id, role, content) VALUES (?, ?, ?)').run(
+      req.params.id, 'user', message.trim()
+    );
+
+    const systemPrompt = buildGardenChatSystem(garden);
+
+    const { reply, toolCalls } = await chatWithTools(
+      messages, systemPrompt, GARDEN_CHAT_TOOLS,
+      (name, input) => executeGardenTool(req.params.id, name, input, settings),
+      settings,
+      { maxTokens: 4096, maxTurns: 8 }
+    );
+
+    // Save assistant reply
+    db.prepare('INSERT INTO garden_chat (garden_id, role, content, tool_calls) VALUES (?, ?, ?, ?)').run(
+      req.params.id, 'assistant', reply, toolCalls.length ? JSON.stringify(toolCalls) : null
+    );
+
+    // Determine which data was modified so frontend knows what to refresh
+    const modified = new Set();
+    for (const tc of toolCalls) {
+      if (['add_planting', 'remove_planting', 'list_plantings'].includes(tc.name)) modified.add('plantings');
+      if (['create_bed', 'move_bed', 'list_beds', 'assign_crop_to_bed', 'remove_crop_from_bed'].includes(tc.name)) modified.add('beds');
+      if (['assign_crop_to_bed', 'remove_crop_from_bed'].includes(tc.name)) modified.add('layouts');
+    }
+
+    res.json({
+      reply,
+      toolCalls,
+      modified: [...modified],
+    });
+  } catch (e) {
+    console.error('Chat error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Clear chat history
+app.delete('/api/gardens/:id/chat', (req, res) => {
+  db.prepare('DELETE FROM garden_chat WHERE garden_id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 if (process.env.NODE_ENV === 'production') {

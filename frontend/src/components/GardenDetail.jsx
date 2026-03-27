@@ -3,6 +3,7 @@ import CropScheduler from './CropScheduler.jsx'
 import PlantingList from './PlantingList.jsx'
 import CompanionPlanner from './CompanionPlanner.jsx'
 import GardenLayout from './GardenLayout.jsx'
+import GardenChat from './GardenChat.jsx'
 import './GardenDetail.css'
 
 const ALL_CROPS = [
@@ -155,6 +156,13 @@ export default function GardenDetail({ garden }) {
     setCompanionCachedInfo(null)
   }
 
+  // Refresh data when the chatbot modifies things
+  function handleChatModified(modified) {
+    if (modified.includes('plantings')) fetchPlantings()
+    // beds and layouts are handled by GardenLayout's own state — it will
+    // remount or the user can switch tabs to see updates
+  }
+
   const location = garden.zone || (garden.zipcode ? `zip ${garden.zipcode}` : 'No zone set')
 
   return (
@@ -224,6 +232,8 @@ export default function GardenDetail({ garden }) {
       {activeTab === 'saved' && (
         <PlantingList plantings={plantings} onUpdate={updatePlanting} onDelete={deletePlanting} onAdd={addPlanting} />
       )}
+
+      <GardenChat gardenId={garden.id} onDataModified={handleChatModified} />
     </div>
   )
 }
