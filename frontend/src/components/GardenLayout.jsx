@@ -161,22 +161,36 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
   const [aiTips, setAiTips]               = useState([])
   const [aiError, setAiError]             = useState('')
   const [bgUploading, setBgUploading]     = useState(false)
+  // Fence & feature state
+  const [activeTool, setActiveTool]               = useState('select')
+  const [fences, setFences]                       = useState([])
+  const [features, setFeatures]                   = useState([])
+  const [drawingFence, setDrawingFence]           = useState([]) // points being drawn
+  const [selectedFenceId, setSelectedFenceId]     = useState(null)
+  const [selectedFeatureId, setSelectedFeatureId] = useState(null)
+  const [fenceGuidance, setFenceGuidance]         = useState(null)
+  const [fenceGuidanceLoading, setFenceGuidanceLoading] = useState(false)
+  const [fenceGuidanceError, setFenceGuidanceError]     = useState('')
+
   const loadedBeds  = useRef(new Set())
   const svgRef      = useRef(null)
   const drag        = useRef({ active: false, bedId: null, ox: 0, oy: 0 })
+  const featureDrag = useRef({ active: false, featureId: null, ox: 0, oy: 0 })
   const bgInputRef  = useRef(null)
 
   const W = garden.layout_width_ft  || 20
   const L = garden.layout_length_ft || 20
   const MARGIN = 1
   const selectedBed = beds.find(b => b.id === selectedBedId) || null
+  const selectedFence = fences.find(f => f.id === selectedFenceId) || null
+  const selectedFeature = features.find(f => f.id === selectedFeatureId) || null
   const activeLayout = layouts[selectedBedId] || {}
   const savedCrops = [...new Set(plantings.map(p => p.crop))]
   const placedCrops = [...new Set(Object.values(activeLayout))]
 
   // ── data loading ──────────────────────────────────────────────────────────
 
-  useEffect(() => { loadBeds() }, [garden.id])
+  useEffect(() => { loadBeds(); loadFences(); loadFeatures() }, [garden.id])
 
   async function loadBeds() {
     const data = await fetch(`/api/gardens/${garden.id}/beds`).then(r => r.json())
@@ -185,6 +199,16 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
       setSelectedBedId(data[0].id)
       await loadLayout(data[0].id)
     }
+  }
+
+  async function loadFences() {
+    const data = await fetch(`/api/gardens/${garden.id}/fences`).then(r => r.json())
+    setFences(data)
+  }
+
+  async function loadFeatures() {
+    const data = await fetch(`/api/gardens/${garden.id}/features`).then(r => r.json())
+    setFeatures(data)
   }
 
   async function loadLayout(bedId) {
@@ -382,6 +406,205 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     }
   }
 
+  // ── fence drawing ────────────────────────────────────────────────────────
+
+  function onCanvasClick(e) {
+    if (activeTool === 'select') return
+    const p = getCanvasPoint(svgRef.current, e)
+    const x = Math.round(p.x * 2) / 2
+    const y = Math.round(p.y * 2) / 2
+    if (x < 0 || y < 0 || x > W || y > L) return
+
+    if (activeTool === 'fence') {
+      setDrawingFence(prev => [...prev, { x, y }])
+      return
+    }
+
+    // Placement tools
+    const typeMap = { tree: 'tree', bush: 'bush', compost: 'compost', path: 'path' }
+    const type = typeMap[activeTool]
+    if (type) {
+      const defaults = {
+        tree: { width_ft: 3, length_ft: 3, name: 'Tree' },
+        bush: { width_ft: 2, length_ft: 2, name: 'Bush' },
+        compost: { width_ft: 3, length_ft: 3, name: 'Compost' },
+        path: { width_ft: 2, length_ft: 4, name: 'Path' },
+      }[type]
+      placeFeature(type, x, y, defaults)
+    }
+  }
+
+  async function placeFeature(type, x, y, defaults) {
+    const body = { type, name: defaults.name, x_ft: x, y_ft: y, width_ft: defaults.width_ft, length_ft: defaults.length_ft }
+    const res = await fetch(`/api/gardens/${garden.id}/features`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json())
+    const feat = { id: res.id, garden_id: garden.id, ...body, metadata: {} }
+    setFeatures(prev => [...prev, feat])
+    setSelectedFeatureId(res.id)
+    setSelectedBedId(null)
+    setSelectedFenceId(null)
+    setActiveTool('select')
+  }
+
+  async function finishFence(close) {
+    const pts = close && drawingFence.length >= 3
+      ? [...drawingFence, drawingFence[0]]
+      : drawingFence
+    if (pts.length < 2) { setDrawingFence([]); return }
+    const body = { name: `Fence ${fences.length + 1}`, fence_type: 'wood', points: pts, post_spacing_ft: 8, closed: close }
+    const res = await fetch(`/api/gardens/${garden.id}/fences`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => r.json())
+    setFences(prev => [...prev, { id: res.id, garden_id: garden.id, ...body }])
+    setDrawingFence([])
+    setSelectedFenceId(res.id)
+    setSelectedBedId(null)
+    setSelectedFeatureId(null)
+    setActiveTool('select')
+  }
+
+  function cancelFenceDrawing() {
+    setDrawingFence([])
+    if (activeTool === 'fence') setActiveTool('select')
+  }
+
+  async function updateFence(id, data) {
+    await fetch(`/api/fences/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    setFences(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
+  }
+
+  async function deleteFence(id) {
+    if (!confirm('Delete this fence?')) return
+    await fetch(`/api/fences/${id}`, { method: 'DELETE' })
+    setFences(prev => prev.filter(f => f.id !== id))
+    setSelectedFenceId(null)
+  }
+
+  async function updateFeature(id, data) {
+    await fetch(`/api/features/${id}`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    setFeatures(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
+  }
+
+  async function deleteFeature(id) {
+    if (!confirm('Delete this feature?')) return
+    await fetch(`/api/features/${id}`, { method: 'DELETE' })
+    setFeatures(prev => prev.filter(f => f.id !== id))
+    setSelectedFeatureId(null)
+  }
+
+  // Fence squaring: snap each interior angle to nearest 90 degrees
+  function squareFence(fence) {
+    const pts = [...fence.points]
+    if (pts.length < 3) return
+    // Simple approach: snap each point to align with axis of previous segment
+    const squared = [pts[0]]
+    for (let i = 1; i < pts.length; i++) {
+      const prev = squared[i - 1]
+      const curr = pts[i]
+      const dx = Math.abs(curr.x - prev.x)
+      const dy = Math.abs(curr.y - prev.y)
+      // Snap to horizontal or vertical
+      if (dx > dy) {
+        squared.push({ x: curr.x, y: prev.y })
+      } else {
+        squared.push({ x: prev.x, y: curr.y })
+      }
+    }
+    updateFence(fence.id, { points: squared })
+  }
+
+  // Fence total length & post count
+  function fenceMetrics(fence) {
+    const pts = fence.points || []
+    let totalLen = 0
+    for (let i = 1; i < pts.length; i++) {
+      totalLen += Math.sqrt((pts[i].x - pts[i-1].x) ** 2 + (pts[i].y - pts[i-1].y) ** 2)
+    }
+    const spacing = fence.post_spacing_ft || 8
+    const postCount = Math.max(2, Math.floor(totalLen / spacing) + 1)
+    return { totalLen: Math.round(totalLen * 10) / 10, postCount, spacing }
+  }
+
+  // AI fence guidance
+  async function fetchFenceGuidance() {
+    setFenceGuidanceLoading(true)
+    setFenceGuidanceError('')
+    try {
+      const res = await fetch(`/api/gardens/${garden.id}/fence-guidance`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setFenceGuidance(data)
+    } catch (e) {
+      setFenceGuidanceError(e.message)
+    } finally {
+      setFenceGuidanceLoading(false)
+    }
+  }
+
+  // Feature dragging
+  function onFeaturePointerDown(e, feat) {
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedFeatureId(feat.id)
+    setSelectedBedId(null)
+    setSelectedFenceId(null)
+    const p = getCanvasPoint(svgRef.current, e)
+    featureDrag.current = { active: true, featureId: feat.id, ox: p.x - (feat.x_ft || 0), oy: p.y - (feat.y_ft || 0) }
+  }
+
+  function onSvgMouseMoveExt(e) {
+    onSvgMouseMove(e)
+    if (!featureDrag.current.active) return
+    const p = getCanvasPoint(svgRef.current, e)
+    const feat = features.find(f => f.id === featureDrag.current.featureId)
+    if (!feat) return
+    const nx = Math.max(0, Math.min(W - (feat.width_ft || 2), p.x - featureDrag.current.ox))
+    const ny = Math.max(0, Math.min(L - (feat.length_ft || 2), p.y - featureDrag.current.oy))
+    const rx = Math.round(nx * 2) / 2
+    const ry = Math.round(ny * 2) / 2
+    setFeatures(prev => prev.map(f => f.id === featureDrag.current.featureId ? { ...f, x_ft: rx, y_ft: ry } : f))
+  }
+
+  function onSvgMouseUpExt() {
+    onSvgMouseUp()
+    if (!featureDrag.current.active) return
+    featureDrag.current.active = false
+    const feat = features.find(f => f.id === featureDrag.current.featureId)
+    if (feat) {
+      fetch(`/api/features/${feat.id}/position`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ x_ft: feat.x_ft || 0, y_ft: feat.y_ft || 0 }),
+      }).catch(console.error)
+    }
+  }
+
+  // ESC key handler for fence drawing
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key === 'Escape') cancelFenceDrawing()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [activeTool])
+
+  function selectItem(type, id) {
+    setSelectedBedId(type === 'bed' ? id : null)
+    setSelectedFenceId(type === 'fence' ? id : null)
+    setSelectedFeatureId(type === 'feature' ? id : null)
+  }
+
   // ── quick-add search ─────────────────────────────────────────────────────
 
   const [quickSearch, setQuickSearch]     = useState('')
@@ -475,6 +698,39 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
         </div>
       </div>
 
+      {/* ── Tool selector ── */}
+      <div className="tool-selector">
+        {[
+          { id: 'select', label: 'Select', icon: '↖' },
+          { id: 'fence',  label: 'Fence',  icon: '⊞' },
+          { id: 'path',   label: 'Path',   icon: '━' },
+          { id: 'tree',   label: 'Tree',   icon: '🌳' },
+          { id: 'bush',   label: 'Bush',   icon: '🌿' },
+          { id: 'compost',label: 'Compost', icon: '♻' },
+        ].map(tool => (
+          <button
+            key={tool.id}
+            className={`tool-btn ${activeTool === tool.id ? 'active' : ''}`}
+            onClick={() => { setActiveTool(tool.id); if (tool.id !== 'fence') setDrawingFence([]) }}
+            title={tool.label}
+          >
+            <span className="tool-icon">{tool.icon}</span>
+            <span className="tool-label">{tool.label}</span>
+          </button>
+        ))}
+        {drawingFence.length >= 2 && (
+          <>
+            <div className="tool-divider" />
+            <button className="btn-ghost btn-sm" onClick={() => finishFence(false)}>Finish fence</button>
+            {drawingFence.length >= 3 && (
+              <button className="btn-ghost btn-sm" onClick={() => finishFence(true)}>Close loop</button>
+            )}
+            <button className="btn-ghost btn-sm" onClick={cancelFenceDrawing}>Cancel</button>
+            <span className="tool-hint">{drawingFence.length} posts placed</span>
+          </>
+        )}
+      </div>
+
       {/* ── AI tips panel ── */}
       {aiTips.length > 0 && (
         <div className="ai-tips-panel">
@@ -535,11 +791,12 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
               )}
               <svg
                 ref={svgRef}
-                className="garden-svg"
+                className={`garden-svg${activeTool !== 'select' ? ' tool-active' : ''}`}
                 viewBox={`${-MARGIN} ${-MARGIN} ${W + MARGIN * 2} ${L + MARGIN * 2}`}
-                onMouseMove={onSvgMouseMove}
-                onMouseUp={onSvgMouseUp}
-                onMouseLeave={onSvgMouseUp}
+                onMouseMove={onSvgMouseMoveExt}
+                onMouseUp={onSvgMouseUpExt}
+                onMouseLeave={onSvgMouseUpExt}
+                onClick={onCanvasClick}
               >
                 {bgUrl && (
                   <image href={bgUrl} x={0} y={0} width={W} height={L}
@@ -556,6 +813,82 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 <text x={W / 2} y={L + 0.7} className="compass-s">S</text>
                 <text x={W + 0.2} y={L / 2} className="dim-label" dominantBaseline="middle">{L}ft</text>
                 <text x={W / 2} y={-0.85} className="dim-label" textAnchor="middle">{W}ft</text>
+
+                {/* ── Paths (render first so they're behind beds) ── */}
+                {features.filter(f => f.type === 'path').map(feat => (
+                  <g key={`feat-${feat.id}`}
+                    className={`feature-group feature-path${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
+                    transform={`translate(${feat.x_ft || 0},${feat.y_ft || 0})`}
+                    onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
+                    onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
+                    style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
+                  >
+                    <rect width={feat.width_ft || 2} height={feat.length_ft || 4} className="path-rect" rx={0.08} />
+                    <text x={(feat.width_ft || 2) / 2} y={(feat.length_ft || 4) / 2} className="feature-label" textAnchor="middle" dominantBaseline="middle">
+                      {feat.name || 'Path'}
+                    </text>
+                  </g>
+                ))}
+
+                {/* ── Fences ── */}
+                {fences.map(fence => {
+                  const pts = fence.points || []
+                  if (pts.length < 2) return null
+                  const pathStr = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
+                  const isSel = fence.id === selectedFenceId
+                  const spacing = fence.post_spacing_ft || 8
+                  // Calculate intermediate post positions
+                  const posts = []
+                  for (let i = 0; i < pts.length; i++) posts.push(pts[i])
+                  // Add intermediate posts along each segment
+                  const intermediatePosts = []
+                  for (let i = 1; i < pts.length; i++) {
+                    const a = pts[i - 1], b = pts[i]
+                    const segLen = Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2)
+                    const count = Math.floor(segLen / spacing)
+                    for (let j = 1; j <= count; j++) {
+                      const t = (j * spacing) / segLen
+                      if (t < 1) intermediatePosts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+                    }
+                  }
+                  return (
+                    <g key={`fence-${fence.id}`}
+                      className={`fence-group${isSel ? ' fence-selected' : ''}`}
+                      onClick={e => { e.stopPropagation(); selectItem('fence', fence.id) }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <path d={pathStr} className="fence-line" />
+                      {posts.map((p, i) => (
+                        <circle key={`fp-${i}`} cx={p.x} cy={p.y} r={0.2} className="fence-post" />
+                      ))}
+                      {intermediatePosts.map((p, i) => (
+                        <circle key={`fip-${i}`} cx={p.x} cy={p.y} r={0.12} className="fence-post-minor" />
+                      ))}
+                      {isSel && pts.length >= 2 && (() => {
+                        const mid = pts[Math.floor(pts.length / 2)]
+                        const m = fenceMetrics(fence)
+                        return <text x={mid.x} y={mid.y - 0.5} className="fence-measure" textAnchor="middle">{m.totalLen}ft</text>
+                      })()}
+                    </g>
+                  )
+                })}
+
+                {/* ── Drawing fence preview ── */}
+                {drawingFence.length > 0 && (
+                  <g className="fence-drawing">
+                    {drawingFence.length >= 2 && (
+                      <path
+                        d={drawingFence.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')}
+                        className="fence-line-preview"
+                      />
+                    )}
+                    {drawingFence.map((p, i) => (
+                      <circle key={i} cx={p.x} cy={p.y} r={0.2} className="fence-post-preview" />
+                    ))}
+                  </g>
+                )}
+
+                {/* ── Beds ── */}
                 {beds.map(bed => {
                   const x = bed.x_ft || 0
                   const y = bed.y_ft || 0
@@ -568,8 +901,9 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                       key={bed.id}
                       className={`bed-group${isSelected ? ' bed-selected' : ''}`}
                       transform={`translate(${x},${y})`}
-                      onMouseDown={e => onBedPointerDown(e, bed)}
-                      style={{ cursor: 'grab' }}
+                      onMouseDown={e => { if (activeTool === 'select') onBedPointerDown(e, bed) }}
+                      onClick={e => { e.stopPropagation(); selectItem('bed', bed.id) }}
+                      style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
                     >
                       <rect width={bw} height={bl} className="bed-rect" rx={0.12} />
                       <text x={bw / 2} y={bl / 2 - 0.15} className="bed-label" textAnchor="middle" dominantBaseline="middle">
@@ -579,6 +913,42 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                     </g>
                   )
                 })}
+
+                {/* ── Trees & Bushes ── */}
+                {features.filter(f => f.type === 'tree' || f.type === 'bush').map(feat => {
+                  const r = (feat.width_ft || 2) / 2
+                  const cx = (feat.x_ft || 0) + r
+                  const cy = (feat.y_ft || 0) + r
+                  return (
+                    <g key={`feat-${feat.id}`}
+                      className={`feature-group feature-${feat.type}${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
+                      onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
+                      onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
+                      style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
+                    >
+                      <circle cx={cx} cy={cy} r={r} className={`feature-circle feature-circle-${feat.type}`} />
+                      <text x={cx} y={cy} className="feature-label" textAnchor="middle" dominantBaseline="middle">
+                        {feat.name || feat.type}
+                      </text>
+                    </g>
+                  )
+                })}
+
+                {/* ── Compost areas ── */}
+                {features.filter(f => f.type === 'compost').map(feat => (
+                  <g key={`feat-${feat.id}`}
+                    className={`feature-group feature-compost${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
+                    transform={`translate(${feat.x_ft || 0},${feat.y_ft || 0})`}
+                    onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
+                    onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
+                    style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
+                  >
+                    <rect width={feat.width_ft || 3} height={feat.length_ft || 3} className="compost-rect" rx={0.12} />
+                    <text x={(feat.width_ft || 3) / 2} y={(feat.length_ft || 3) / 2} className="feature-label" textAnchor="middle" dominantBaseline="middle">
+                      {feat.name || 'Compost'}
+                    </text>
+                  </g>
+                ))}
               </svg>
               <div className="canvas-hint">Drag beds to reposition · Click a bed to edit in the panel</div>
             </div>
@@ -586,8 +956,163 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
         </div>
 
         {/* ── Right: edit panel ── */}
-        {selectedBed && (
+        {(selectedBed || selectedFence || selectedFeature) && (
           <div className="layout-panel-col">
+
+            {/* ═══ FENCE PANEL ═══ */}
+            {selectedFence && (
+              <>
+                <div className="panel-section">
+                  <div className="panel-bed-header">
+                    <div>
+                      <span className="paint-title">{selectedFence.name}</span>
+                      <span className="paint-subtitle">{selectedFence.fence_type} fence</span>
+                    </div>
+                    <div className="panel-bed-actions">
+                      <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFence(selectedFence.id)}>Delete</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="panel-section">
+                  <div className="panel-section-label">Fence properties</div>
+                  <div className="fence-props-form">
+                    <label className="fence-prop">
+                      <span>Name</span>
+                      <input value={selectedFence.name} onChange={e => updateFence(selectedFence.id, { ...selectedFence, name: e.target.value })} />
+                    </label>
+                    <label className="fence-prop">
+                      <span>Type</span>
+                      <select value={selectedFence.fence_type} onChange={e => updateFence(selectedFence.id, { ...selectedFence, fence_type: e.target.value })}>
+                        <option value="wood">Wood</option>
+                        <option value="wire">Wire/Mesh</option>
+                        <option value="chain_link">Chain Link</option>
+                        <option value="vinyl">Vinyl</option>
+                        <option value="metal">Metal</option>
+                        <option value="split_rail">Split Rail</option>
+                      </select>
+                    </label>
+                    <label className="fence-prop">
+                      <span>Post spacing (ft)</span>
+                      <input type="number" min={2} max={20} step={0.5} value={selectedFence.post_spacing_ft || 8}
+                        onChange={e => updateFence(selectedFence.id, { ...selectedFence, post_spacing_ft: Number(e.target.value) })} />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="panel-section">
+                  <div className="panel-section-label">Materials estimate</div>
+                  {(() => {
+                    const m = fenceMetrics(selectedFence)
+                    return (
+                      <div className="fence-materials">
+                        <div className="fence-material-row"><span>Total length</span><strong>{m.totalLen} ft</strong></div>
+                        <div className="fence-material-row"><span>Corner/end posts</span><strong>{(selectedFence.points || []).length}</strong></div>
+                        <div className="fence-material-row"><span>Total posts ({m.spacing}ft spacing)</span><strong>{m.postCount}</strong></div>
+                        <div className="fence-material-row"><span>Panels/sections</span><strong>{Math.max(0, m.postCount - 1)}</strong></div>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                <div className="panel-section">
+                  <div className="panel-section-label">Tools</div>
+                  <button className="btn-ghost btn-sm" onClick={() => squareFence(selectedFence)}>
+                    ⊾ Square corners
+                  </button>
+                </div>
+
+                <div className="panel-section">
+                  <div className="panel-section-label">AI fence guidance</div>
+                  {!fenceGuidance && !fenceGuidanceLoading && (
+                    <button className="btn-ghost btn-sm btn-ai" onClick={fetchFenceGuidance}>
+                      ✨ Get soil & post depth guidance
+                    </button>
+                  )}
+                  {fenceGuidanceLoading && <div className="fence-guidance-loading">Analyzing soil conditions...</div>}
+                  {fenceGuidanceError && <div className="ai-error">{fenceGuidanceError}</div>}
+                  {fenceGuidance && (
+                    <div className="fence-guidance">
+                      <div className="fence-guidance-row"><span>Region</span><strong>{fenceGuidance.region_name}</strong></div>
+                      <div className="fence-guidance-row"><span>Soil type</span><strong>{fenceGuidance.soil_type}</strong></div>
+                      {fenceGuidance.soil_notes && <div className="fence-guidance-note">{fenceGuidance.soil_notes}</div>}
+                      <div className="fence-guidance-row"><span>Frost line</span><strong>{fenceGuidance.frost_line_depth_inches}" deep</strong></div>
+                      <div className="fence-guidance-row"><span>Post hole depth</span><strong>{fenceGuidance.recommended_post_hole_depth_inches}"</strong></div>
+                      <div className="fence-guidance-row"><span>Use concrete</span><strong>{fenceGuidance.use_concrete ? 'Yes' : 'No'}</strong></div>
+                      {fenceGuidance.concrete_notes && <div className="fence-guidance-note">{fenceGuidance.concrete_notes}</div>}
+                      <div className="fence-guidance-row"><span>Post diameter</span><strong>{fenceGuidance.post_diameter_inches}"</strong></div>
+                      <div className="fence-guidance-row"><span>Best time to install</span><strong>{fenceGuidance.best_time_to_install}</strong></div>
+                      {fenceGuidance.drainage_notes && <div className="fence-guidance-note">{fenceGuidance.drainage_notes}</div>}
+                      {fenceGuidance.recommendations?.length > 0 && (
+                        <>
+                          <div className="panel-section-label" style={{ marginTop: 8 }}>Recommendations</div>
+                          <ul className="fence-guidance-tips">
+                            {fenceGuidance.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </>
+                      )}
+                      <button className="btn-ghost btn-sm" onClick={() => { setFenceGuidance(null); fetchFenceGuidance() }} style={{ marginTop: 6 }}>
+                        Refresh guidance
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* ═══ FEATURE PANEL ═══ */}
+            {selectedFeature && (
+              <>
+                <div className="panel-section">
+                  <div className="panel-bed-header">
+                    <div>
+                      <span className="paint-title">{selectedFeature.name || selectedFeature.type}</span>
+                      <span className="paint-subtitle">{selectedFeature.type} · {selectedFeature.width_ft} × {selectedFeature.length_ft} ft</span>
+                    </div>
+                    <div className="panel-bed-actions">
+                      <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFeature(selectedFeature.id)}>Delete</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="panel-section">
+                  <div className="panel-section-label">Properties</div>
+                  <div className="fence-props-form">
+                    <label className="fence-prop">
+                      <span>Name</span>
+                      <input value={selectedFeature.name || ''} onChange={e => updateFeature(selectedFeature.id, { name: e.target.value })} />
+                    </label>
+                    {selectedFeature.type !== 'path' && (
+                      <label className="fence-prop">
+                        <span>Size (ft)</span>
+                        <input type="number" min={1} max={30} step={0.5} value={selectedFeature.width_ft || 2}
+                          onChange={e => {
+                            const v = Number(e.target.value)
+                            updateFeature(selectedFeature.id, { width_ft: v, length_ft: v })
+                          }} />
+                      </label>
+                    )}
+                    {selectedFeature.type === 'path' && (
+                      <>
+                        <label className="fence-prop">
+                          <span>Width (ft)</span>
+                          <input type="number" min={1} max={30} step={0.5} value={selectedFeature.width_ft || 2}
+                            onChange={e => updateFeature(selectedFeature.id, { width_ft: Number(e.target.value) })} />
+                        </label>
+                        <label className="fence-prop">
+                          <span>Length (ft)</span>
+                          <input type="number" min={1} max={50} step={0.5} value={selectedFeature.length_ft || 4}
+                            onChange={e => updateFeature(selectedFeature.id, { length_ft: Number(e.target.value) })} />
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ═══ BED PANEL ═══ */}
+            {selectedBed && <>
             {/* Bed selector tabs */}
             {beds.length > 1 && (
               <div className="panel-bed-tabs">
@@ -595,7 +1120,7 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                   <button
                     key={b.id}
                     className={`panel-bed-tab ${b.id === selectedBedId ? 'active' : ''}`}
-                    onClick={() => setSelectedBedId(b.id)}
+                    onClick={() => selectItem('bed', b.id)}
                   >
                     {b.name}
                   </button>
@@ -784,6 +1309,7 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 )
               })()}
             </div>
+            </>}
           </div>
         )}
       </div>

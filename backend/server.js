@@ -107,6 +107,26 @@ db.exec(`
     cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(garden_id, crop_key)
   );
+  CREATE TABLE IF NOT EXISTS garden_fences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    garden_id INTEGER REFERENCES gardens(id),
+    name TEXT DEFAULT 'Fence',
+    fence_type TEXT DEFAULT 'wood',
+    points TEXT NOT NULL,
+    post_spacing_ft REAL DEFAULT 8,
+    closed INTEGER DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS garden_features (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    garden_id INTEGER REFERENCES gardens(id),
+    type TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    x_ft REAL DEFAULT 0,
+    y_ft REAL DEFAULT 0,
+    width_ft REAL DEFAULT 2,
+    length_ft REAL DEFAULT 2,
+    metadata TEXT DEFAULT '{}'
+  );
   CREATE TABLE IF NOT EXISTS llm_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -782,6 +802,8 @@ app.delete('/api/gardens/:id', (req, res) => {
   db.prepare('DELETE FROM plantings WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM beds WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM garden_fences WHERE garden_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM garden_features WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM gardens WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -870,6 +892,141 @@ app.delete('/api/beds/:id/layout/:row/:col', (req, res) => {
 app.delete('/api/beds/:id/layout', (req, res) => {
   db.prepare('DELETE FROM bed_layout WHERE bed_id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Garden fences CRUD
+// ---------------------------------------------------------------------------
+
+app.get('/api/gardens/:id/fences', (req, res) => {
+  const rows = db.prepare('SELECT * FROM garden_fences WHERE garden_id = ?').all(req.params.id);
+  res.json(rows.map(r => ({ ...r, points: JSON.parse(r.points) })));
+});
+
+app.post('/api/gardens/:id/fences', (req, res) => {
+  const { name, fence_type, points, post_spacing_ft, closed } = req.body;
+  if (!points?.length) return res.status(400).json({ error: 'points required' });
+  const result = db.prepare(
+    'INSERT INTO garden_fences (garden_id, name, fence_type, points, post_spacing_ft, closed) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(req.params.id, name || 'Fence', fence_type || 'wood', JSON.stringify(points), post_spacing_ft || 8, closed ? 1 : 0);
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.put('/api/fences/:id', (req, res) => {
+  const fence = db.prepare('SELECT * FROM garden_fences WHERE id = ?').get(req.params.id);
+  if (!fence) return res.status(404).json({ error: 'Not found' });
+  const { name, fence_type, points, post_spacing_ft, closed } = req.body;
+  db.prepare(
+    'UPDATE garden_fences SET name=?, fence_type=?, points=?, post_spacing_ft=?, closed=? WHERE id=?'
+  ).run(
+    name ?? fence.name, fence_type ?? fence.fence_type,
+    points ? JSON.stringify(points) : fence.points,
+    post_spacing_ft ?? fence.post_spacing_ft,
+    closed !== undefined ? (closed ? 1 : 0) : fence.closed,
+    req.params.id
+  );
+  res.json({ ok: true });
+});
+
+app.delete('/api/fences/:id', (req, res) => {
+  db.prepare('DELETE FROM garden_fences WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Garden features CRUD (trees, bushes, compost, paths)
+// ---------------------------------------------------------------------------
+
+app.get('/api/gardens/:id/features', (req, res) => {
+  const rows = db.prepare('SELECT * FROM garden_features WHERE garden_id = ?').all(req.params.id);
+  res.json(rows.map(r => ({ ...r, metadata: JSON.parse(r.metadata || '{}') })));
+});
+
+app.post('/api/gardens/:id/features', (req, res) => {
+  const { type, name, x_ft, y_ft, width_ft, length_ft, metadata } = req.body;
+  if (!type) return res.status(400).json({ error: 'type required' });
+  const result = db.prepare(
+    'INSERT INTO garden_features (garden_id, type, name, x_ft, y_ft, width_ft, length_ft, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(req.params.id, type, name || '', x_ft || 0, y_ft || 0, width_ft || 2, length_ft || 2, JSON.stringify(metadata || {}));
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.put('/api/features/:id', (req, res) => {
+  const feat = db.prepare('SELECT * FROM garden_features WHERE id = ?').get(req.params.id);
+  if (!feat) return res.status(404).json({ error: 'Not found' });
+  const { name, x_ft, y_ft, width_ft, length_ft, metadata } = req.body;
+  db.prepare(
+    'UPDATE garden_features SET name=?, x_ft=?, y_ft=?, width_ft=?, length_ft=?, metadata=? WHERE id=?'
+  ).run(
+    name !== undefined ? name : feat.name,
+    x_ft !== undefined ? x_ft : feat.x_ft,
+    y_ft !== undefined ? y_ft : feat.y_ft,
+    width_ft !== undefined ? width_ft : feat.width_ft,
+    length_ft !== undefined ? length_ft : feat.length_ft,
+    metadata ? JSON.stringify(metadata) : feat.metadata,
+    req.params.id
+  );
+  res.json({ ok: true });
+});
+
+app.patch('/api/features/:id/position', (req, res) => {
+  const { x_ft, y_ft } = req.body;
+  db.prepare('UPDATE garden_features SET x_ft=?, y_ft=? WHERE id=?').run(
+    Number(x_ft) || 0, Number(y_ft) || 0, req.params.id
+  );
+  res.json({ ok: true });
+});
+
+app.delete('/api/features/:id', (req, res) => {
+  db.prepare('DELETE FROM garden_features WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// AI fence guidance (soil type, frost line, post depth)
+// ---------------------------------------------------------------------------
+
+app.post('/api/gardens/:id/fence-guidance', async (req, res) => {
+  const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
+  if (!garden) return res.status(404).json({ error: 'Not found' });
+  const zipcode = garden.zipcode || req.body.zipcode;
+  if (!zipcode) return res.status(400).json({ error: 'No zip code set for this garden. Update your garden settings.' });
+
+  try {
+    const settings = getLLMSettings();
+    const text = await chat(
+      `You are a fencing and landscaping expert. For zip code ${zipcode} in the United States, provide guidance on installing garden fence posts.
+
+Consider the local climate, soil conditions, and frost line depth for this region.
+
+Reply ONLY with valid JSON, no markdown fences:
+{
+  "region_name": "brief region description (e.g. Northeast Ohio)",
+  "soil_type": "predominant soil type (e.g. Clay loam)",
+  "soil_notes": "brief note about working with this soil",
+  "frost_line_depth_inches": number,
+  "recommended_post_hole_depth_inches": number,
+  "use_concrete": true or false,
+  "concrete_notes": "why or why not to use concrete",
+  "post_diameter_inches": number,
+  "recommended_post_spacing_ft": number,
+  "recommendations": [
+    "specific recommendation 1",
+    "specific recommendation 2",
+    "specific recommendation 3"
+  ],
+  "best_time_to_install": "best season/months for installation",
+  "drainage_notes": "any drainage considerations"
+}`,
+      settings,
+      { maxTokens: 1024 }
+    );
+    const data = JSON.parse(text.replace(/```json|```/g, '').trim());
+    res.json(data);
+  } catch (e) {
+    console.error('Fence guidance error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ---------------------------------------------------------------------------
