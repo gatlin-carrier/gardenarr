@@ -469,12 +469,16 @@ app.post('/api/schedule', async (req, res) => {
   }
 });
 
-async function companionForCrops(cropList, settings) {
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function companionForCrops(cropList, settings, retries = 2) {
   if (!settings.api_key && !settings.ollama_base_url) {
     throw new Error('No API key configured. Please set your API key in Settings.');
   }
-  const text = await chat(
-    `You are a gardening expert specializing in companion planting. Analyze ALL possible pairings among these crops: ${cropList.join(', ')}.
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const text = await chat(
+        `You are a gardening expert specializing in companion planting. Analyze ALL possible pairings among these crops: ${cropList.join(', ')}.
 
 IMPORTANT: You MUST evaluate EVERY possible pair of crops. For ${cropList.length} crops that means ${cropList.length * (cropList.length - 1) / 2} pairs. Do not skip any pairs. Pay special attention to harmful relationships (e.g. potatoes and tomatoes are both nightshades and should not be planted together).
 
@@ -503,15 +507,26 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
   ],
   "tips": ["general companion planting tip 1", "tip 2", "tip 3"]
 }`,
-    settings,
-    { maxTokens: 4096 }
-  );
-  const raw = text.replace(/```json|```/g, '').trim();
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Failed to parse companion JSON:', raw.slice(0, 200));
-    throw new Error('AI returned invalid JSON. Try again.');
+        settings,
+        { maxTokens: 8192 }
+      );
+      const raw = text.replace(/```json|```/g, '').trim();
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        console.error('Failed to parse companion JSON:', raw.slice(0, 200));
+        throw new Error('AI returned invalid JSON. Try again.');
+      }
+    } catch (e) {
+      const isRetryable = /rate|limit|timeout|ECONNRESET|ETIMEDOUT|overloaded|529|503|429/i.test(e.message);
+      if (isRetryable && attempt < retries) {
+        const delay = (attempt + 1) * 3000; // 3s, 6s
+        console.log(`Companion batch retry ${attempt + 1}/${retries} after ${delay}ms: ${e.message}`);
+        await sleep(delay);
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
@@ -557,18 +572,22 @@ app.post('/api/companion', async (req, res) => {
 
   try {
     const settings = getLLMSettingsForTask('companion');
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 15;
 
     if (crops.length <= BATCH_SIZE) {
       return res.json(await companionForCrops(crops, settings));
     }
 
-    // Chunk into batches and run sequentially to avoid rate limits
+    // Chunk into batches and run sequentially with delays to avoid rate limits
     const batches = buildCompanionBatches(crops, BATCH_SIZE);
+    console.log(`Companion analysis: ${crops.length} crops → ${batches.length} batches`);
     const results = [];
     const errors = [];
     for (let i = 0; i < batches.length; i++) {
+      // Delay between batches to avoid rate limits (skip first)
+      if (i > 0) await sleep(2000);
       try {
+        console.log(`Companion batch ${i + 1}/${batches.length} (${batches[i].length} crops)...`);
         const r = await companionForCrops(batches[i], settings);
         results.push(r);
       } catch (e) {
