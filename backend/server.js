@@ -478,9 +478,9 @@ async function companionForCrops(cropList, settings, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const text = await chat(
-        `You are a gardening expert specializing in companion planting. Analyze ALL possible pairings among these crops: ${cropList.join(', ')}.
+        `You are a gardening expert specializing in companion planting. Analyze companion relationships among these crops: ${cropList.join(', ')}.
 
-IMPORTANT: You MUST evaluate EVERY possible pair of crops. For ${cropList.length} crops that means ${cropList.length * (cropList.length - 1) / 2} pairs. Do not skip any pairs. Pay special attention to harmful relationships (e.g. potatoes and tomatoes are both nightshades and should not be planted together).
+IMPORTANT: Only include BENEFICIAL and HARMFUL pairs. Do NOT include neutral pairs — skip any pair where the crops have no significant interaction. Focus especially on harmful pairings (e.g. potatoes and tomatoes are nightshades and compete for nutrients/share blight, fennel inhibits most plants, etc).
 
 Reply ONLY with valid JSON, no markdown fences, no extra text:
 {
@@ -488,8 +488,8 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
     {
       "crop_a": "string",
       "crop_b": "string",
-      "relationship": "beneficial" | "harmful" | "neutral",
-      "reason": "brief explanation of why"
+      "relationship": "beneficial" | "harmful",
+      "reason": "brief explanation"
     }
   ],
   "bed_suggestions": [
@@ -505,7 +505,7 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
       "reason": "why to keep apart"
     }
   ],
-  "tips": ["general companion planting tip 1", "tip 2", "tip 3"]
+  "tips": ["tip1", "tip2"]
 }`,
         settings,
         { maxTokens: 8192 }
@@ -518,7 +518,7 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
         throw new Error('AI returned invalid JSON. Try again.');
       }
     } catch (e) {
-      const isRetryable = /rate|limit|timeout|ECONNRESET|ETIMEDOUT|overloaded|529|503|429/i.test(e.message);
+      const isRetryable = /rate|limit|timeout|ECONNRESET|ETIMEDOUT|ECONNREFUSED|overloaded|socket|hang up|529|503|429|500/i.test(e.message);
       if (isRetryable && attempt < retries) {
         const delay = (attempt + 1) * 3000; // 3s, 6s
         console.log(`Companion batch retry ${attempt + 1}/${retries} after ${delay}ms: ${e.message}`);
@@ -570,9 +570,13 @@ app.post('/api/companion', async (req, res) => {
   const { crops } = req.body;
   if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
 
+  // Extend timeout for long multi-batch analysis (10 min)
+  req.setTimeout(600000);
+  res.setTimeout(600000);
+
   try {
     const settings = getLLMSettingsForTask('companion');
-    const BATCH_SIZE = 15;
+    const BATCH_SIZE = 20;
 
     if (crops.length <= BATCH_SIZE) {
       return res.json(await companionForCrops(crops, settings));
