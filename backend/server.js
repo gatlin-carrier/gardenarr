@@ -99,6 +99,14 @@ db.exec(`
     subscription TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS companion_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    garden_id INTEGER REFERENCES gardens(id),
+    crop_key TEXT NOT NULL,
+    data TEXT NOT NULL,
+    cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(garden_id, crop_key)
+  );
   CREATE TABLE IF NOT EXISTS llm_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -126,6 +134,10 @@ const migrations = [
   'ALTER TABLE beds ADD COLUMN y_ft REAL DEFAULT 0',
   'ALTER TABLE gardens ADD COLUMN is_default INTEGER DEFAULT 0',
   'ALTER TABLE gardens ADD COLUMN sort_order INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_planted INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_transplanted INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_harvested INTEGER DEFAULT 0',
+  'ALTER TABLE plantings ADD COLUMN status_skipped INTEGER DEFAULT 0',
 ];
 for (const sql of migrations) {
   try { db.prepare(sql).run(); } catch {} // column already exists → silent no-op
@@ -437,14 +449,11 @@ app.post('/api/schedule', async (req, res) => {
   }
 });
 
-app.post('/api/companion', async (req, res) => {
-  const { crops } = req.body;
-  if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
+async function companionForCrops(cropList, settings) {
+  const text = await chat(
+    `You are a gardening expert specializing in companion planting. Analyze ALL possible pairings among these crops: ${cropList.join(', ')}.
 
-  try {
-    const settings = getLLMSettingsForTask('companion');
-    const text = await chat(
-      `You are a gardening expert specializing in companion planting. Analyze these crops: ${crops.join(', ')}.
+IMPORTANT: You MUST evaluate EVERY possible pair of crops. For ${cropList.length} crops that means ${cropList.length * (cropList.length - 1) / 2} pairs. Do not skip any pairs. Pay special attention to harmful relationships (e.g. potatoes and tomatoes are both nightshades and should not be planted together).
 
 Reply ONLY with valid JSON, no markdown, no extra text:
 {
@@ -471,15 +480,134 @@ Reply ONLY with valid JSON, no markdown, no extra text:
   ],
   "tips": ["general companion planting tip 1", "tip 2", "tip 3"]
 }`,
-      settings,
-      { maxTokens: 3000 }
-    );
-    const raw = text.replace(/```json|```/g, '').trim();
-    res.json(JSON.parse(raw));
+    settings,
+    { maxTokens: 4096 }
+  );
+  const raw = text.replace(/```json|```/g, '').trim();
+  return JSON.parse(raw);
+}
+
+// Build batches so every pair of crops appears in at least one batch.
+// For each pair of non-overlapping groups, create cross-group batches
+// that interleave crops from both groups.
+function buildCompanionBatches(crops, batchSize) {
+  if (crops.length <= batchSize) return [crops];
+
+  // Split into non-overlapping base groups
+  const groups = [];
+  for (let i = 0; i < crops.length; i += batchSize) {
+    groups.push(crops.slice(i, i + batchSize));
+  }
+
+  // Start with the base groups (covers all intra-group pairs)
+  const batches = [...groups];
+
+  // For every pair of groups, create cross-batches so each crop in group A
+  // appears with each crop in group B in at least one batch.
+  for (let a = 0; a < groups.length; a++) {
+    for (let b = a + 1; b < groups.length; b++) {
+      // Interleave: take half from each group per batch
+      const half = Math.floor(batchSize / 2);
+      for (let i = 0; i < groups[a].length; i += half) {
+        for (let j = 0; j < groups[b].length; j += half) {
+          const chunk = [
+            ...groups[a].slice(i, i + half),
+            ...groups[b].slice(j, j + half),
+          ];
+          if (chunk.length >= 2) batches.push(chunk);
+        }
+      }
+    }
+  }
+
+  return batches;
+}
+
+app.post('/api/companion', async (req, res) => {
+  const { crops } = req.body;
+  if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
+
+  try {
+    const settings = getLLMSettingsForTask('companion');
+    const BATCH_SIZE = 10;
+
+    if (crops.length <= BATCH_SIZE) {
+      return res.json(await companionForCrops(crops, settings));
+    }
+
+    // Chunk into overlapping batches and run in parallel
+    const batches = buildCompanionBatches(crops, BATCH_SIZE);
+    const results = await Promise.all(batches.map(b => companionForCrops(b, settings)));
+
+    // Merge results, deduplicating pairs by sorted crop key
+    const pairMap = new Map();
+    const avoidMap = new Map();
+    const bedSuggestions = [];
+    const allTips = [];
+
+    for (const r of results) {
+      for (const pair of (r.pairs || [])) {
+        const key = [pair.crop_a, pair.crop_b].sort().join('||');
+        if (!pairMap.has(key)) pairMap.set(key, pair);
+      }
+      for (const avoid of (r.avoid_together || [])) {
+        const key = [...avoid.crops].sort().join('||');
+        if (!avoidMap.has(key)) avoidMap.set(key, avoid);
+      }
+      bedSuggestions.push(...(r.bed_suggestions || []));
+      allTips.push(...(r.tips || []));
+    }
+
+    // Deduplicate bed suggestions by crop set and tips by value
+    const seenBeds = new Set();
+    const uniqueBeds = bedSuggestions.filter(b => {
+      const key = [...b.crops].sort().join('||');
+      if (seenBeds.has(key)) return false;
+      seenBeds.add(key);
+      return true;
+    });
+
+    res.json({
+      pairs: [...pairMap.values()],
+      bed_suggestions: uniqueBeds,
+      avoid_together: [...avoidMap.values()],
+      tips: [...new Set(allTips)],
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Companion cache (per garden)
+// ---------------------------------------------------------------------------
+
+function companionCropKey(crops) {
+  return [...crops].map(c => c.trim().toLowerCase()).sort().join('||');
+}
+
+app.get('/api/gardens/:id/companion', (req, res) => {
+  const row = db.prepare(
+    'SELECT data, crop_key, cached_at FROM companion_cache WHERE garden_id = ? ORDER BY cached_at DESC LIMIT 1'
+  ).get(req.params.id);
+  if (!row) return res.json(null);
+  res.json({ ...JSON.parse(row.data), crop_key: row.crop_key, cached_at: row.cached_at });
+});
+
+app.post('/api/gardens/:id/companion', (req, res) => {
+  const { crops, result } = req.body;
+  if (!crops?.length || !result) return res.status(400).json({ error: 'Missing crops or result' });
+  const key = companionCropKey(crops);
+  db.prepare(
+    'INSERT OR REPLACE INTO companion_cache (garden_id, crop_key, data, cached_at) VALUES (?, ?, ?, datetime(\'now\'))'
+  ).run(req.params.id, key, JSON.stringify(result));
+  res.json({ ok: true });
+});
+
+app.delete('/api/gardens/:id/companion', (req, res) => {
+  db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -526,6 +654,16 @@ Reply ONLY with valid JSON, no markdown, no extra text:
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// Return which crop names are already in the plant_info_cache
+app.post('/api/plants/info/cached', (req, res) => {
+  const { crops } = req.body;
+  if (!crops?.length) return res.json({ cached: [] });
+  const keys = crops.map(c => c.trim().toLowerCase());
+  const placeholders = keys.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT crop FROM plant_info_cache WHERE crop IN (${placeholders})`).all(...keys);
+  res.json({ cached: rows.map(r => r.crop) });
 });
 
 // ---------------------------------------------------------------------------
@@ -621,6 +759,7 @@ app.post('/api/gardens/:id/set-default', (req, res) => {
 app.delete('/api/gardens/:id', (req, res) => {
   db.prepare('DELETE FROM plantings WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM beds WHERE garden_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM companion_cache WHERE garden_id = ?').run(req.params.id);
   db.prepare('DELETE FROM gardens WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -638,10 +777,19 @@ app.post('/api/gardens/:id/plantings', (req, res) => {
 });
 
 app.put('/api/plantings/:id', (req, res) => {
-  const { crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes } = req.body;
+  const { crop, sow_indoors, transplant_or_direct_sow, harvest, tip, notes,
+          status_planted, status_transplanted, status_harvested, status_skipped } = req.body;
+  // If only status fields are being updated (partial update)
+  if (crop === undefined && status_planted !== undefined) {
+    db.prepare(
+      'UPDATE plantings SET status_planted=?, status_transplanted=?, status_harvested=?, status_skipped=? WHERE id=?'
+    ).run(status_planted ? 1 : 0, status_transplanted ? 1 : 0, status_harvested ? 1 : 0, status_skipped ? 1 : 0, req.params.id);
+    return res.json({ ok: true });
+  }
   db.prepare(
-    'UPDATE plantings SET crop=?, sow_indoors=?, transplant_or_direct_sow=?, harvest=?, tip=?, notes=? WHERE id=?'
-  ).run(crop, sow_indoors || null, transplant_or_direct_sow, harvest, tip, notes || '', req.params.id);
+    'UPDATE plantings SET crop=?, sow_indoors=?, transplant_or_direct_sow=?, harvest=?, tip=?, notes=?, status_planted=?, status_transplanted=?, status_harvested=?, status_skipped=? WHERE id=?'
+  ).run(crop, sow_indoors || null, transplant_or_direct_sow, harvest, tip, notes || '',
+        status_planted ? 1 : 0, status_transplanted ? 1 : 0, status_harvested ? 1 : 0, status_skipped ? 1 : 0, req.params.id);
   res.json({ ok: true });
 });
 
