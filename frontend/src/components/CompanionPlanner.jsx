@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import './CompanionPlanner.css'
 
 const ALL_CROPS = [
@@ -10,96 +10,25 @@ const ALL_CROPS = [
   'Corn','Pumpkins','Watermelon','Potatoes','Sunflowers','Nasturtiums'
 ]
 
-export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
-  const [selected, setSelected] = useState(new Set())
+export default function CompanionPlanner({
+  gardenId, savedPlantings = [],
+  loading, result, error, selected, cachedInfo,
+  onToggleCrop, onAddCustom, onAnalyze, onCancel
+}) {
   const [customCrop, setCustomCrop] = useState('')
-  const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [cachedInfo, setCachedInfo] = useState(null)
-
-  // Load cached companion data for this garden
-  useEffect(() => {
-    if (!gardenId) return
-    fetch(`/api/gardens/${gardenId}/companion`)
-      .then(r => r.json())
-      .then(data => {
-        if (data && data.pairs) {
-          setResult(data)
-          setCachedInfo(data.cached_at ? `Cached ${new Date(data.cached_at + 'Z').toLocaleDateString()}` : 'Cached')
-          // Restore the crop selection from the cached crop_key
-          if (data.crop_key) {
-            const crops = data.crop_key.split('||').map(c => c.trim())
-            // Try to match original casing from savedPlantings or ALL_CROPS
-            const allNames = [...ALL_CROPS, ...savedPlantings.map(p => p.crop)]
-            const nameMap = {}
-            for (const n of allNames) nameMap[n.toLowerCase()] = n
-            setSelected(new Set(crops.map(c => nameMap[c] || c)))
-          }
-        }
-      })
-      .catch(() => {})
-  }, [gardenId])
-
-  // Pre-select saved plantings when the component mounts or saved plantings change
-  useEffect(() => {
-    if (!savedPlantings.length) return
-    setSelected(prev => {
-      const next = new Set(prev)
-      for (const p of savedPlantings) next.add(p.crop)
-      return next
-    })
-  }, [savedPlantings])
-
-  const savedCropNames = new Set(savedPlantings.map(p => p.crop))
-
-  function toggleCrop(crop) {
-    setSelected(prev => {
-      const next = new Set(prev)
-      next.has(crop) ? next.delete(crop) : next.add(crop)
-      return next
-    })
-    setResult(null)
-    setCachedInfo(null)
-  }
 
   function addCustom() {
     if (!customCrop.trim()) return
-    setSelected(prev => new Set([...prev, customCrop.trim()]))
+    onAddCustom(customCrop.trim())
     setCustomCrop('')
   }
 
-  async function analyze() {
-    if (selected.size < 2) { setError('Select at least 2 crops to analyze.'); return }
-    setLoading(true)
-    setError('')
-    setResult(null)
-    setCachedInfo(null)
-    try {
-      const cropList = [...selected]
-      const res = await fetch('/api/companion', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ crops: cropList })
-      })
-      const data = await res.json()
-      if (data.error) { setError(data.error); return }
-      setResult(data)
-      // Cache the result for this garden
-      if (gardenId) {
-        fetch(`/api/gardens/${gardenId}/companion`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ crops: cropList, result: data })
-        }).catch(() => {})
-      }
-    } catch(e) {
-      setError('Failed to analyze. Is the backend running?')
-    } finally {
-      setLoading(false)
-    }
+  function handleAnalyze() {
+    if (selected.size < 2) return
+    onAnalyze([...selected])
   }
 
+  const savedCropNames = new Set(savedPlantings.map(p => p.crop))
   const beneficial = result?.pairs?.filter(p => p.relationship === 'beneficial') || []
   const harmful = result?.pairs?.filter(p => p.relationship === 'harmful') || []
 
@@ -119,7 +48,7 @@ export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
           <button
             key={crop}
             className={`crop-chip ${selected.has(crop) ? 'selected' : ''} ${savedCropNames.has(crop) && selected.has(crop) ? 'saved' : ''}`}
-            onClick={() => toggleCrop(crop)}
+            onClick={() => onToggleCrop(crop)}
           >
             {crop}
           </button>
@@ -134,7 +63,7 @@ export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
             <button
               key={p.crop}
               className={`crop-chip ${selected.has(p.crop) ? 'selected saved' : ''}`}
-              onClick={() => toggleCrop(p.crop)}
+              onClick={() => onToggleCrop(p.crop)}
             >
               {p.crop}
             </button>
@@ -157,7 +86,7 @@ export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
           <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Analyzing:</span>
           {[...selected].map(c => (
             <span key={c} className="selected-chip">
-              {c}<button onClick={() => toggleCrop(c)}>×</button>
+              {c}<button onClick={() => onToggleCrop(c)}>×</button>
             </span>
           ))}
         </div>
@@ -168,11 +97,18 @@ export default function CompanionPlanner({ gardenId, savedPlantings = [] }) {
       <div className="cp-action-row">
         <button
           className="btn-primary analyze-btn"
-          onClick={analyze}
+          onClick={handleAnalyze}
           disabled={loading || selected.size < 2}
         >
-          {loading ? 'Analyzing companion relationships...' : (cachedInfo && result ? `Re-analyze ${selected.size} crops` : `Analyze ${selected.size} crop${selected.size !== 1 ? 's' : ''}`)}
+          {loading
+            ? 'Analyzing companion relationships…'
+            : (cachedInfo && result
+                ? `Re-analyze ${selected.size} crops`
+                : `Analyze ${selected.size} crop${selected.size !== 1 ? 's' : ''}`)}
         </button>
+        {loading && (
+          <button className="btn-ghost" onClick={onCancel}>Cancel</button>
+        )}
         {cachedInfo && <span className="cp-cached-badge">{cachedInfo}</span>}
       </div>
 

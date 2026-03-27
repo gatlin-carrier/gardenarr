@@ -52,6 +52,68 @@
 .tab:hover { color: var(--text); background: var(--green-50); }
 .tab.active { color: var(--green-800); border-bottom-color: var(--green-600); font-weight: 500; }
 
+/* Pulsing dot on the Companions tab while analysis is running */
+.tab-analyzing-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green-600);
+  animation: tab-dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tab-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* Sticky banner shown when companion analysis is running on another tab */
+.companion-progress-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--green-50);
+  border: 1px solid var(--green-200);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--green-800);
+}
+.companion-banner-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--green-300);
+  border-top-color: var(--green-700);
+  border-radius: 50%;
+  animation: banner-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes banner-spin {
+  to { transform: rotate(360deg); }
+}
+.companion-banner-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  background: var(--green-700);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.companion-banner-btn:hover { background: var(--green-800); }
+.companion-banner-cancel {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--green-700);
+  border: 1px solid var(--green-300);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+.companion-banner-cancel:hover { background: var(--green-100); }
+
 .tab-count {
   background: var(--green-200);
   color: var(--green-800);
