@@ -386,18 +386,25 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     try {
       const data = await fetch(`/api/gardens/${garden.id}/layout/suggest`, { method: 'POST' }).then(r => r.json())
       if (data.error) throw new Error(data.error)
+      // Update bed positions
       setBeds(prev => prev.map(b => {
         const suggestion = data.beds?.find(s => s.id === b.id)
         return suggestion ? { ...b, x_ft: suggestion.x_ft, y_ft: suggestion.y_ft } : b
       }))
       setAiTips(data.tips || [])
-      // Persist new positions
-      for (const suggestion of (data.beds || [])) {
-        fetch(`/api/beds/${suggestion.id}/position`, {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ x_ft: suggestion.x_ft, y_ft: suggestion.y_ft }),
-        }).catch(console.error)
+      // Backend already persisted positions and cell assignments,
+      // so reload all bed layouts to pick up new crop placements
+      if (data.cell_assignments?.length) {
+        loadedBeds.current.clear()
+        const layoutUpdates = {}
+        for (const bed of beds) {
+          const cells = await fetch(`/api/beds/${bed.id}/layout`).then(r => r.json())
+          const map = {}
+          for (const c of cells) map[`${c.row},${c.col}`] = c.crop
+          layoutUpdates[bed.id] = map
+          loadedBeds.current.add(bed.id)
+        }
+        setLayouts(prev => ({ ...prev, ...layoutUpdates }))
       }
     } catch (e) {
       setAiError(e.message)
@@ -690,7 +697,7 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
             disabled={aiLoading || beds.length === 0}
             title="Let AI suggest bed positions based on companion planting &amp; sun needs"
           >
-            {aiLoading ? '✨ Arranging…' : '✨ AI arrange'}
+            {aiLoading ? '✨ Arranging & planting…' : '✨ AI arrange & plant'}
           </button>
           <button className="btn-ghost btn-sm" onClick={() => setShowNewBed(v => !v)}>
             + Add bed

@@ -1012,41 +1012,104 @@ app.delete('/api/gardens/:id/layout/bg', (req, res) => {
   res.json({ ok: true });
 });
 
-// AI bed arrangement suggestion
+// AI bed arrangement + crop distribution
 app.post('/api/gardens/:id/layout/suggest', async (req, res) => {
   const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
   if (!garden) return res.status(404).json({ error: 'Not found' });
 
-  const beds = db.prepare('SELECT b.*, GROUP_CONCAT(p.crop) as crops FROM beds b LEFT JOIN plantings p ON p.bed_id = b.id WHERE b.garden_id = ? GROUP BY b.id').all(req.params.id);
-
+  const beds = db.prepare('SELECT * FROM beds WHERE garden_id = ?').all(req.params.id);
   if (!beds.length) return res.status(400).json({ error: 'No beds to arrange' });
 
-  const gardenW = garden.layout_width_ft  || 20;
+  const plantings = db.prepare('SELECT crop FROM plantings WHERE garden_id = ?').all(req.params.id);
+  const crops = [...new Set(plantings.map(p => p.crop))];
+
+  // Load existing bed layouts to see what's already placed
+  const existingLayouts = {};
+  for (const bed of beds) {
+    const cells = db.prepare('SELECT row, col, crop FROM bed_layout WHERE bed_id = ?').all(bed.id);
+    existingLayouts[bed.id] = cells;
+  }
+
+  const gardenW = garden.layout_width_ft || 20;
   const gardenL = garden.layout_length_ft || 20;
 
-  const bedDescriptions = beds.map(b =>
-    `- Bed "${b.name}" (${b.width_ft || 4}ft × ${b.length_ft || 8}ft): ${b.crops || 'no crops assigned'}`
-  ).join('\n');
+  const bedDescriptions = beds.map(b => {
+    const existing = existingLayouts[b.id] || [];
+    const placedCrops = [...new Set(existing.map(c => c.crop))];
+    const cols = Math.max(1, Math.round(b.width_ft || 4));
+    const rows = Math.max(1, Math.round(b.length_ft || 8));
+    const totalCells = cols * rows;
+    const usedCells = existing.length;
+    return `- Bed "${b.name}" (id:${b.id}, ${b.width_ft || 4}ft × ${b.length_ft || 8}ft, grid: ${cols} cols × ${rows} rows, ${totalCells} cells total, ${usedCells} cells used): ${placedCrops.length ? 'has: ' + placedCrops.join(', ') : 'empty'}`;
+  }).join('\n');
 
-  const prompt = `You are a garden layout expert. Arrange these raised beds within a ${gardenW}ft × ${gardenL}ft garden space (width × length, assume north is the top edge).
+  const unplacedCrops = crops.filter(crop => {
+    return !Object.values(existingLayouts).some(cells => cells.some(c => c.crop === crop));
+  });
+
+  const prompt = `You are a garden layout and companion planting expert. You have a ${gardenW}ft × ${gardenL}ft garden (width × length, north is top).
 
 Beds:
 ${bedDescriptions}
 
-Rules:
-- Place taller/sun-loving crops (corn, tomatoes, sunflowers) on the north side so they don't shade shorter crops
-- Group companion plants near each other
-- Leave at least 2ft between beds for walking paths
-- Keep all beds fully inside the garden boundary
-- Beds may not overlap
+${crops.length ? `All crops in this garden: ${crops.join(', ')}` : 'No crops saved yet.'}
+${unplacedCrops.length ? `Crops NOT yet placed in any bed: ${unplacedCrops.join(', ')}` : 'All crops are already placed in beds.'}
+
+Tasks:
+1. POSITION beds: suggest x_ft, y_ft for each bed. Taller/sun-loving crops (corn, tomatoes, sunflowers) on the north side. Leave 2+ ft between beds. Keep beds inside the boundary.
+2. DISTRIBUTE crops: assign every unplaced crop to a bed and grid cell position (row, col). Consider:
+   - Companion planting (good neighbors together, bad neighbors in separate beds)
+   - Plant spacing (larger plants like tomatoes need more cells, herbs can share)
+   - Sun needs (group similar light requirements)
+   - Don't overwrite existing cell assignments — only fill empty cells
+   - Each cell is ~1 sq ft. A tomato might need 2-4 cells, herbs 1 cell, etc.
 
 Return ONLY valid JSON, no markdown:
-{"beds":[{"id":number,"x_ft":number,"y_ft":number}],"tips":["tip1","tip2","tip3"]}`;
+{
+  "beds": [{"id": number, "x_ft": number, "y_ft": number}],
+  "cell_assignments": [{"bed_id": number, "row": number, "col": number, "crop": "string"}],
+  "tips": ["tip1", "tip2"]
+}`;
 
   try {
     const settings = getLLMSettings();
-    const text = await chat(prompt, settings, { maxTokens: 1024 });
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+    const text = await chat(prompt, settings, { maxTokens: 4096 });
     const data = JSON.parse(text.replace(/```json|```/g, '').trim());
+
+    // Persist cell assignments to bed_layout
+    if (data.cell_assignments?.length) {
+      const upsert = db.prepare(
+        'INSERT OR REPLACE INTO bed_layout (bed_id, row, col, crop) VALUES (?, ?, ?, ?)'
+      );
+      const validBedIds = new Set(beds.map(b => b.id));
+      let placed = 0;
+      for (const a of data.cell_assignments) {
+        if (!validBedIds.has(a.bed_id) || !a.crop?.trim()) continue;
+        const bed = beds.find(b => b.id === a.bed_id);
+        const maxCols = Math.max(1, Math.round(bed.width_ft || 4));
+        const maxRows = Math.max(1, Math.round(bed.length_ft || 8));
+        if (a.row < 0 || a.row >= maxRows || a.col < 0 || a.col >= maxCols) continue;
+        // Don't overwrite existing cells
+        const existing = (existingLayouts[a.bed_id] || []).find(c => c.row === a.row && c.col === a.col);
+        if (existing) continue;
+        upsert.run(a.bed_id, a.row, a.col, a.crop.trim());
+        placed++;
+      }
+      console.log(`AI placed ${placed} crops into bed cells`);
+    }
+
+    // Persist bed positions
+    if (data.beds?.length) {
+      for (const b of data.beds) {
+        if (!beds.find(bed => bed.id === b.id)) continue;
+        db.prepare('UPDATE beds SET x_ft=?, y_ft=? WHERE id=?').run(
+          Number(b.x_ft) || 0, Number(b.y_ft) || 0, b.id
+        );
+      }
+    }
+
     res.json(data);
   } catch (e) {
     console.error(e);
