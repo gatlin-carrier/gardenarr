@@ -10,6 +10,33 @@ const DEFAULT_MODELS = {
   custom: '',
 };
 
+// Cache clients so connections are reused across calls
+const _clientCache = {};
+
+function getAnthropicClient(apiKey) {
+  const cacheKey = `anthropic:${apiKey}`;
+  if (!_clientCache[cacheKey]) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    _clientCache[cacheKey] = new Anthropic({
+      apiKey,
+      timeout: 5 * 60 * 1000,   // 5 minute timeout per request
+      maxRetries: 3,             // SDK-level retries for 429/500/503
+    });
+  }
+  return _clientCache[cacheKey];
+}
+
+function getOpenAIClient(apiKey, baseURL) {
+  const cacheKey = `openai:${apiKey}:${baseURL || 'default'}`;
+  if (!_clientCache[cacheKey]) {
+    const OpenAI = require('openai');
+    const opts = { apiKey, timeout: 5 * 60 * 1000, maxRetries: 3 };
+    if (baseURL) opts.baseURL = baseURL;
+    _clientCache[cacheKey] = new OpenAI(opts);
+  }
+  return _clientCache[cacheKey];
+}
+
 /**
  * Send a single user message and return the response text.
  * @param {string} userMessage
@@ -23,8 +50,7 @@ async function chat(userMessage, settings, { maxTokens = 4096 } = {}) {
 
   switch (provider) {
     case 'anthropic': {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey: settings.api_key });
+      const client = getAnthropicClient(settings.api_key);
       const msg = await client.messages.create({
         model,
         max_tokens: maxTokens,
@@ -34,8 +60,7 @@ async function chat(userMessage, settings, { maxTokens = 4096 } = {}) {
     }
 
     case 'openai': {
-      const OpenAI = require('openai');
-      const client = new OpenAI({ apiKey: settings.api_key });
+      const client = getOpenAIClient(settings.api_key);
       const res = await client.chat.completions.create({
         model,
         max_tokens: maxTokens,
@@ -61,11 +86,8 @@ async function chat(userMessage, settings, { maxTokens = 4096 } = {}) {
         lmstudio: 'http://localhost:1234/v1',
         custom: 'http://localhost:8080/v1',
       };
-      const OpenAI = require('openai');
-      const client = new OpenAI({
-        apiKey: settings.api_key || provider,
-        baseURL: settings.ollama_base_url || defaultUrls[provider],
-      });
+      const baseURL = settings.ollama_base_url || defaultUrls[provider];
+      const client = getOpenAIClient(settings.api_key || provider, baseURL);
       const res = await client.chat.completions.create({
         model,
         max_tokens: maxTokens,
