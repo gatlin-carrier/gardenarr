@@ -530,114 +530,20 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
   }
 }
 
-// Build batches so every pair of crops appears in at least one batch.
-// For each pair of non-overlapping groups, create cross-group batches
-// that interleave crops from both groups.
-function buildCompanionBatches(crops, batchSize) {
-  if (crops.length <= batchSize) return [crops];
-
-  // Split into non-overlapping base groups
-  const groups = [];
-  for (let i = 0; i < crops.length; i += batchSize) {
-    groups.push(crops.slice(i, i + batchSize));
-  }
-
-  // Start with the base groups (covers all intra-group pairs)
-  const batches = [...groups];
-
-  // For every pair of groups, create cross-batches so each crop in group A
-  // appears with each crop in group B in at least one batch.
-  for (let a = 0; a < groups.length; a++) {
-    for (let b = a + 1; b < groups.length; b++) {
-      // Interleave: take half from each group per batch
-      const half = Math.floor(batchSize / 2);
-      for (let i = 0; i < groups[a].length; i += half) {
-        for (let j = 0; j < groups[b].length; j += half) {
-          const chunk = [
-            ...groups[a].slice(i, i + half),
-            ...groups[b].slice(j, j + half),
-          ];
-          if (chunk.length >= 2) batches.push(chunk);
-        }
-      }
-    }
-  }
-
-  return batches;
-}
 
 app.post('/api/companion', async (req, res) => {
   const { crops } = req.body;
   if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
 
-  // Extend timeout for long multi-batch analysis (10 min)
+  // Extend timeout — single call but can take a while for many crops
   req.setTimeout(600000);
   res.setTimeout(600000);
 
   try {
     const settings = getLLMSettingsForTask('companion');
-    const BATCH_SIZE = 20;
-
-    if (crops.length <= BATCH_SIZE) {
-      return res.json(await companionForCrops(crops, settings));
-    }
-
-    // Chunk into batches and run sequentially with delays to avoid rate limits
-    const batches = buildCompanionBatches(crops, BATCH_SIZE);
-    console.log(`Companion analysis: ${crops.length} crops → ${batches.length} batches`);
-    const results = [];
-    const errors = [];
-    for (let i = 0; i < batches.length; i++) {
-      // Delay between batches to avoid rate limits (skip first)
-      if (i > 0) await sleep(2000);
-      try {
-        console.log(`Companion batch ${i + 1}/${batches.length} (${batches[i].length} crops)...`);
-        const r = await companionForCrops(batches[i], settings);
-        results.push(r);
-      } catch (e) {
-        console.error(`Companion batch ${i + 1}/${batches.length} failed:`, e.message);
-        errors.push(e.message);
-      }
-    }
-
-    if (!results.length) {
-      throw new Error(errors[0] || 'All companion batches failed');
-    }
-
-    // Merge results, deduplicating pairs by sorted crop key
-    const pairMap = new Map();
-    const avoidMap = new Map();
-    const bedSuggestions = [];
-    const allTips = [];
-
-    for (const r of results) {
-      for (const pair of (r.pairs || [])) {
-        const key = [pair.crop_a, pair.crop_b].sort().join('||');
-        if (!pairMap.has(key)) pairMap.set(key, pair);
-      }
-      for (const avoid of (r.avoid_together || [])) {
-        const key = [...avoid.crops].sort().join('||');
-        if (!avoidMap.has(key)) avoidMap.set(key, avoid);
-      }
-      bedSuggestions.push(...(r.bed_suggestions || []));
-      allTips.push(...(r.tips || []));
-    }
-
-    // Deduplicate bed suggestions by crop set and tips by value
-    const seenBeds = new Set();
-    const uniqueBeds = bedSuggestions.filter(b => {
-      const key = [...b.crops].sort().join('||');
-      if (seenBeds.has(key)) return false;
-      seenBeds.add(key);
-      return true;
-    });
-
-    res.json({
-      pairs: [...pairMap.values()],
-      bed_suggestions: uniqueBeds,
-      avoid_together: [...avoidMap.values()],
-      tips: [...new Set(allTips)],
-    });
+    console.log(`Companion analysis: ${crops.length} crops in a single call`);
+    const data = await companionForCrops(crops, settings);
+    res.json(data);
   } catch (e) {
     console.error('Companion analysis error:', e);
     res.status(500).json({ error: e.message });
