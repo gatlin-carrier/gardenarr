@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import './GardenLayout.css'
 
 // ─── crop categories (mirrors PlantingList) ──────────────────────────────────
@@ -154,6 +154,203 @@ function BedSwatches({ bedId, layout, bw, bl }) {
   )
 }
 
+// ─── Grass decoration (scattered blades on empty areas) ────────────────────
+
+function seededRandom(seed) {
+  let s = seed | 0
+  return () => { s = Math.imul(s ^ (s >>> 16), 0x45d9f3b); s = Math.imul(s ^ (s >>> 13), 0x45d9f3b); return ((s ^= s >>> 16) >>> 0) / 4294967296 }
+}
+
+function GrassDecoration({ W, L, beds, features }) {
+  return useMemo(() => {
+    const rand = seededRandom(Math.round(W * 1000 + L * 7))
+    const occupied = []
+    for (const b of beds) {
+      occupied.push({ x: b.x_ft || 0, y: b.y_ft || 0, w: b.width_ft || 4, h: b.length_ft || 8 })
+    }
+    for (const f of features) {
+      occupied.push({ x: f.x_ft || 0, y: f.y_ft || 0, w: f.width_ft || 2, h: f.length_ft || 2 })
+    }
+    function isOccupied(px, py) {
+      for (const r of occupied) {
+        if (px >= r.x - 0.3 && px <= r.x + r.w + 0.3 && py >= r.y - 0.3 && py <= r.y + r.h + 0.3) return true
+      }
+      return false
+    }
+
+    const clumps = []
+    const count = Math.round(W * L * 0.12)
+    for (let i = 0; i < count; i++) {
+      const cx = rand() * W
+      const cy = rand() * L
+      if (isOccupied(cx, cy)) continue
+      const bladeCount = 2 + Math.floor(rand() * 3)
+      const scale = 0.08 + rand() * 0.06
+      const rotation = rand() * 30 - 15
+      clumps.push(
+        <g key={i} transform={`translate(${cx.toFixed(2)},${cy.toFixed(2)}) scale(${scale.toFixed(3)}) rotate(${rotation.toFixed(1)})`} opacity={0.35 + rand() * 0.2}>
+          {Array.from({ length: bladeCount }, (_, j) => {
+            const xOff = (rand() - 0.5) * 3
+            const lean = (rand() - 0.5) * 2
+            const h = 3 + rand() * 4
+            return (
+              <path
+                key={j}
+                d={`M${xOff.toFixed(1)},0 Q${(xOff + lean).toFixed(1)},${(-h * 0.6).toFixed(1)} ${(xOff + lean * 1.5).toFixed(1)},${(-h).toFixed(1)}`}
+                stroke={`hsl(${110 + rand() * 30}, ${50 + rand() * 20}%, ${30 + rand() * 15}%)`}
+                strokeWidth={0.5 + rand() * 0.5}
+                fill="none"
+                strokeLinecap="round"
+              />
+            )
+          })}
+        </g>
+      )
+    }
+    return <g className="grass-deco">{clumps}</g>
+  }, [W, L, beds.length, features.length])
+}
+
+// ─── Feature SVG shapes (symbolic realism) ─────────────────────────────────
+
+function FeatureSVG({ feature, isSelected, onPointerDown }) {
+  const { type, x_ft, y_ft, width_ft, length_ft, name } = feature
+  const w = width_ft || 2
+  const h = length_ft || 2
+
+  let content
+  switch (type) {
+    case 'tree': {
+      const r = Math.min(w, h) / 2
+      const cx = w / 2, cy = h / 2
+      content = (
+        <>
+          {/* trunk */}
+          <rect x={cx - r * 0.15} y={cy + r * 0.1} width={r * 0.3} height={r * 0.6} rx={r * 0.05} fill="#8B6914" opacity={0.85} />
+          {/* canopy shadow */}
+          <ellipse cx={cx + r * 0.08} cy={cy + r * 0.08} rx={r * 0.85} ry={r * 0.75} fill="rgba(0,40,0,0.12)" />
+          {/* main canopy */}
+          <ellipse cx={cx} cy={cy} rx={r * 0.85} ry={r * 0.75} fill="#2d7a2d" />
+          {/* highlight */}
+          <ellipse cx={cx - r * 0.15} cy={cy - r * 0.18} rx={r * 0.5} ry={r * 0.4} fill="#4aad4a" opacity={0.5} />
+          {/* texture dots */}
+          <circle cx={cx + r * 0.25} cy={cy - r * 0.1} r={r * 0.08} fill="#1f5e1f" opacity={0.4} />
+          <circle cx={cx - r * 0.3} cy={cy + r * 0.15} r={r * 0.06} fill="#1f5e1f" opacity={0.3} />
+        </>
+      )
+      break
+    }
+    case 'bush': {
+      const cx = w / 2, cy = h / 2
+      const rx = w * 0.42, ry = h * 0.38
+      content = (
+        <>
+          {/* shadow */}
+          <ellipse cx={cx + 0.05} cy={cy + ry * 0.5} rx={rx * 0.9} ry={ry * 0.3} fill="rgba(0,30,0,0.1)" />
+          {/* base mass */}
+          <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="#3a8a3a" />
+          {/* layered lobes */}
+          <ellipse cx={cx - rx * 0.35} cy={cy - ry * 0.15} rx={rx * 0.55} ry={ry * 0.65} fill="#48a048" opacity={0.7} />
+          <ellipse cx={cx + rx * 0.3} cy={cy - ry * 0.1} rx={rx * 0.5} ry={ry * 0.6} fill="#42964a" opacity={0.6} />
+          {/* highlight */}
+          <ellipse cx={cx} cy={cy - ry * 0.3} rx={rx * 0.4} ry={ry * 0.3} fill="#5dbd5d" opacity={0.35} />
+          {/* small berry dots */}
+          <circle cx={cx - rx * 0.2} cy={cy + ry * 0.1} r={0.06} fill="#c44" opacity={0.6} />
+          <circle cx={cx + rx * 0.15} cy={cy - ry * 0.15} r={0.05} fill="#c44" opacity={0.5} />
+        </>
+      )
+      break
+    }
+    case 'compost': {
+      const cx = w / 2, cy = h / 2
+      content = (
+        <>
+          {/* bin body */}
+          <rect x={w * 0.1} y={h * 0.15} width={w * 0.8} height={h * 0.75} rx={0.1} fill="#6B4226" />
+          {/* slats */}
+          <line x1={w * 0.1} y1={h * 0.38} x2={w * 0.9} y2={h * 0.38} stroke="#5a3620" strokeWidth={0.04} />
+          <line x1={w * 0.1} y1={h * 0.58} x2={w * 0.9} y2={h * 0.58} stroke="#5a3620" strokeWidth={0.04} />
+          <line x1={w * 0.1} y1={h * 0.78} x2={w * 0.9} y2={h * 0.78} stroke="#5a3620" strokeWidth={0.04} />
+          {/* compost inside peeking over top */}
+          <ellipse cx={cx} cy={h * 0.18} rx={w * 0.35} ry={h * 0.08} fill="#4a6b20" opacity={0.7} />
+          {/* lid */}
+          <rect x={w * 0.05} y={h * 0.1} width={w * 0.9} height={h * 0.08} rx={0.05} fill="#7a5030" />
+          {/* label */}
+          <text x={cx} y={cy + h * 0.05} textAnchor="middle" dominantBaseline="middle" fontSize={Math.min(w, h) * 0.18} fill="rgba(255,255,255,0.6)" fontWeight="600" pointerEvents="none">&#9851;</text>
+        </>
+      )
+      break
+    }
+    case 'path': {
+      content = (
+        <>
+          {/* gravel/stone path */}
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="#c8b898" />
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="url(#pathPattern)" opacity={0.4} />
+          {/* subtle border */}
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="none" stroke="#b0a080" strokeWidth={0.04} />
+        </>
+      )
+      break
+    }
+    default: {
+      content = (
+        <rect x={0} y={0} width={w} height={h} rx={0.1} fill="#aaa" opacity={0.4} stroke="#888" strokeWidth={0.04} />
+      )
+    }
+  }
+
+  return (
+    <g
+      className={`feature-group${isSelected ? ' feature-selected' : ''}`}
+      transform={`translate(${x_ft || 0},${y_ft || 0})`}
+      onMouseDown={onPointerDown}
+      style={{ cursor: 'grab' }}
+    >
+      {content}
+      {name && (
+        <text x={w / 2} y={h + 0.35} className="feature-label" textAnchor="middle" fontSize={0.4} fill="var(--text-muted, #666)" pointerEvents="none">
+          {name}
+        </text>
+      )}
+    </g>
+  )
+}
+
+// ─── SVG pattern defs ──────────────────────────────────────────────────────
+
+function GardenDefs() {
+  return (
+    <defs>
+      <pattern id="pathPattern" width="0.5" height="0.5" patternUnits="userSpaceOnUse">
+        <circle cx="0.15" cy="0.15" r="0.08" fill="#a09070" opacity="0.5" />
+        <circle cx="0.4" cy="0.35" r="0.06" fill="#a09070" opacity="0.4" />
+      </pattern>
+    </defs>
+  )
+}
+
+// ─── Resize handle (corner drag) ───────────────────────────────────────────
+
+function ResizeHandle({ x, y, onResizeStart }) {
+  return (
+    <g className="resize-handle" onMouseDown={onResizeStart} style={{ cursor: 'nwse-resize' }}>
+      {/* invisible hit area */}
+      <rect x={x - 0.3} y={y - 0.3} width={0.6} height={0.6} fill="transparent" />
+      {/* visible triangle */}
+      <path
+        d={`M${x},${y - 0.35} L${x + 0.35},${y} L${x},${y} Z`}
+        fill="var(--green-600, #16a34a)"
+        opacity={0.8}
+        transform={`rotate(180, ${x}, ${y - 0.175})`}
+      />
+      {/* small grip lines */}
+      <line x1={x - 0.05} y1={y} x2={x} y2={y - 0.05} stroke="white" strokeWidth={0.03} />
+      <line x1={x - 0.15} y1={y} x2={x} y2={y - 0.15} stroke="white" strokeWidth={0.03} />
+    </g>
+  )
+}
+
 // ─── GardenLayout (main component) ──────────────────────────────────────────
 
 export default function GardenLayout({ garden: gardenProp, plantings }) {
@@ -175,9 +372,13 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
   const [aiTips, setAiTips]               = useState([])
   const [aiError, setAiError]             = useState('')
   const [bgUploading, setBgUploading]     = useState(false)
+  const [features, setFeatures]           = useState([])
+  const [selectedFeatureId, setSelectedFeatureId] = useState(null)
+  const [showAddFeature, setShowAddFeature]       = useState(false)
   const loadedBeds  = useRef(new Set())
   const svgRef      = useRef(null)
-  const drag        = useRef({ active: false, bedId: null, ox: 0, oy: 0 })
+  const drag        = useRef({ active: false, type: null, id: null, ox: 0, oy: 0 })
+  const resize      = useRef({ active: false, type: null, id: null, startW: 0, startH: 0, startX: 0, startY: 0 })
   const bgInputRef  = useRef(null)
 
   const W = garden.layout_width_ft  || 20
@@ -190,7 +391,7 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
 
   // ── data loading ──────────────────────────────────────────────────────────
 
-  useEffect(() => { loadBeds() }, [garden.id])
+  useEffect(() => { loadBeds(); loadFeatures() }, [garden.id])
 
   async function loadBeds() {
     const data = await fetch(`/api/gardens/${garden.id}/beds`).then(r => r.json())
@@ -199,6 +400,11 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
       setSelectedBedId(data[0].id)
       await loadLayout(data[0].id)
     }
+  }
+
+  async function loadFeatures() {
+    const data = await fetch(`/api/gardens/${garden.id}/features`).then(r => r.json())
+    setFeatures(data)
   }
 
   async function loadLayout(bedId) {
@@ -333,41 +539,160 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     setGarden(g => ({ ...g, bg_image: null }))
   }
 
-  // ── SVG drag ──────────────────────────────────────────────────────────────
+  // ── SVG drag (beds + features) ────────────────────────────────────────────
 
   function onBedPointerDown(e, bed) {
     e.preventDefault()
     e.stopPropagation()
     setSelectedBedId(bed.id)
+    setSelectedFeatureId(null)
     const p = getCanvasPoint(svgRef.current, e)
-    drag.current = { active: true, bedId: bed.id, ox: p.x - (bed.x_ft || 0), oy: p.y - (bed.y_ft || 0) }
+    drag.current = { active: true, type: 'bed', id: bed.id, ox: p.x - (bed.x_ft || 0), oy: p.y - (bed.y_ft || 0) }
+  }
+
+  function onFeaturePointerDown(e, feat) {
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedFeatureId(feat.id)
+    setSelectedBedId(null)
+    const p = getCanvasPoint(svgRef.current, e)
+    drag.current = { active: true, type: 'feature', id: feat.id, ox: p.x - (feat.x_ft || 0), oy: p.y - (feat.y_ft || 0) }
+  }
+
+  function onResizeStart(e, type, id) {
+    e.preventDefault()
+    e.stopPropagation()
+    const p = getCanvasPoint(svgRef.current, e)
+    const item = type === 'bed' ? beds.find(b => b.id === id) : features.find(f => f.id === id)
+    if (!item) return
+    resize.current = {
+      active: true, type, id,
+      startW: item.width_ft || (type === 'bed' ? 4 : 2),
+      startH: item.length_ft || (type === 'bed' ? 8 : 2),
+      startX: p.x, startY: p.y,
+    }
   }
 
   function onSvgMouseMove(e) {
+    // Handle resize
+    if (resize.current.active) {
+      const p = getCanvasPoint(svgRef.current, e)
+      const dx = p.x - resize.current.startX
+      const dy = p.y - resize.current.startY
+      const newW = Math.max(1, Math.round((resize.current.startW + dx) * 2) / 2)
+      const newH = Math.max(1, Math.round((resize.current.startH + dy) * 2) / 2)
+      if (resize.current.type === 'bed') {
+        const clamped = { width_ft: Math.min(newW, 50), length_ft: Math.min(newH, 50) }
+        setBeds(prev => prev.map(b => b.id === resize.current.id ? { ...b, ...clamped } : b))
+      } else {
+        const clamped = { width_ft: Math.min(newW, 50), length_ft: Math.min(newH, 50) }
+        setFeatures(prev => prev.map(f => f.id === resize.current.id ? { ...f, ...clamped } : f))
+      }
+      return
+    }
+
+    // Handle drag
     if (!drag.current.active) return
     const p = getCanvasPoint(svgRef.current, e)
-    const bed = beds.find(b => b.id === drag.current.bedId)
-    if (!bed) return
-    const nx = Math.max(0, Math.min(W - (bed.width_ft || 4), p.x - drag.current.ox))
-    const ny = Math.max(0, Math.min(L - (bed.length_ft || 8), p.y - drag.current.oy))
-    // Round to 0.5ft for snap feel
-    const rx = Math.round(nx * 2) / 2
-    const ry = Math.round(ny * 2) / 2
-    setBeds(prev => prev.map(b => b.id === drag.current.bedId ? { ...b, x_ft: rx, y_ft: ry } : b))
+
+    if (drag.current.type === 'bed') {
+      const bed = beds.find(b => b.id === drag.current.id)
+      if (!bed) return
+      const nx = Math.max(0, Math.min(W - (bed.width_ft || 4), p.x - drag.current.ox))
+      const ny = Math.max(0, Math.min(L - (bed.length_ft || 8), p.y - drag.current.oy))
+      const rx = Math.round(nx * 2) / 2
+      const ry = Math.round(ny * 2) / 2
+      setBeds(prev => prev.map(b => b.id === drag.current.id ? { ...b, x_ft: rx, y_ft: ry } : b))
+    } else if (drag.current.type === 'feature') {
+      const feat = features.find(f => f.id === drag.current.id)
+      if (!feat) return
+      const nx = Math.max(0, Math.min(W - (feat.width_ft || 2), p.x - drag.current.ox))
+      const ny = Math.max(0, Math.min(L - (feat.length_ft || 2), p.y - drag.current.oy))
+      // Free positioning (no grid snap after initial placement)
+      const rx = Math.round(nx * 4) / 4  // quarter-foot precision
+      const ry = Math.round(ny * 4) / 4
+      setFeatures(prev => prev.map(f => f.id === drag.current.id ? { ...f, x_ft: rx, y_ft: ry } : f))
+    }
   }
 
   function onSvgMouseUp() {
+    // Handle resize end
+    if (resize.current.active) {
+      resize.current.active = false
+      if (resize.current.type === 'bed') {
+        const bed = beds.find(b => b.id === resize.current.id)
+        if (bed) {
+          fetch(`/api/beds/${bed.id}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: bed.name, width_ft: bed.width_ft, length_ft: bed.length_ft }),
+          }).catch(console.error)
+        }
+      } else {
+        const feat = features.find(f => f.id === resize.current.id)
+        if (feat) {
+          fetch(`/api/features/${feat.id}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ width_ft: feat.width_ft, length_ft: feat.length_ft }),
+          }).catch(console.error)
+        }
+      }
+      return
+    }
+
     if (!drag.current.active) return
     drag.current.active = false
-    const bed = beds.find(b => b.id === drag.current.bedId)
-    if (bed) {
-      fetch(`/api/beds/${bed.id}/position`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ x_ft: bed.x_ft || 0, y_ft: bed.y_ft || 0 }),
-      }).catch(console.error)
+
+    if (drag.current.type === 'bed') {
+      const bed = beds.find(b => b.id === drag.current.id)
+      if (bed) {
+        fetch(`/api/beds/${bed.id}/position`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ x_ft: bed.x_ft || 0, y_ft: bed.y_ft || 0 }),
+        }).catch(console.error)
+      }
+    } else if (drag.current.type === 'feature') {
+      const feat = features.find(f => f.id === drag.current.id)
+      if (feat) {
+        fetch(`/api/features/${feat.id}/position`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ x_ft: feat.x_ft || 0, y_ft: feat.y_ft || 0 }),
+        }).catch(console.error)
+      }
     }
   }
+
+  // ── Feature CRUD ─────────────────────────────────────────────────────────
+
+  async function addFeature(type) {
+    // Snap to nearest grid position near center
+    const x = Math.round(W / 2)
+    const y = Math.round(L / 2)
+    const defaults = { tree: { w: 3, h: 3 }, bush: { w: 2, h: 2 }, compost: { w: 2, h: 3 }, path: { w: 1, h: 4 } }
+    const d = defaults[type] || { w: 2, h: 2 }
+    const res = await fetch(`/api/gardens/${garden.id}/features`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type, name: type.charAt(0).toUpperCase() + type.slice(1), x_ft: x, y_ft: y, width_ft: d.w, length_ft: d.h }),
+    })
+    const data = await res.json()
+    const newFeature = { id: data.id, type, name: type.charAt(0).toUpperCase() + type.slice(1), x_ft: x, y_ft: y, width_ft: d.w, length_ft: d.h }
+    setFeatures(prev => [...prev, newFeature])
+    setSelectedFeatureId(data.id)
+    setSelectedBedId(null)
+    setShowAddFeature(false)
+  }
+
+  async function deleteFeature(id) {
+    await fetch(`/api/features/${id}`, { method: 'DELETE' })
+    setFeatures(prev => prev.filter(f => f.id !== id))
+    if (selectedFeatureId === id) setSelectedFeatureId(null)
+  }
+
+  const selectedFeature = features.find(f => f.id === selectedFeatureId) || null
 
   // ── AI arrange ────────────────────────────────────────────────────────────
 
@@ -486,6 +811,19 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
           <button className="btn-ghost btn-sm" onClick={() => setShowNewBed(v => !v)}>
             + Add bed
           </button>
+          <div className="feature-add-wrap">
+            <button className="btn-ghost btn-sm" onClick={() => setShowAddFeature(v => !v)}>
+              + Feature
+            </button>
+            {showAddFeature && (
+              <div className="feature-add-menu">
+                <button onClick={() => addFeature('tree')}>🌳 Tree</button>
+                <button onClick={() => addFeature('bush')}>🌿 Bush</button>
+                <button onClick={() => addFeature('compost')}>♻ Compost</button>
+                <button onClick={() => addFeature('path')}>🟫 Path</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -554,12 +892,18 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 onMouseMove={onSvgMouseMove}
                 onMouseUp={onSvgMouseUp}
                 onMouseLeave={onSvgMouseUp}
+                onClick={() => { setSelectedFeatureId(null) }}
               >
+                <GardenDefs />
                 {bgUrl && (
                   <image href={bgUrl} x={0} y={0} width={W} height={L}
                     preserveAspectRatio="xMidYMid slice" className="svg-bg-image" />
                 )}
                 <rect x={0} y={0} width={W} height={L} className="garden-boundary" />
+
+                {/* Grass blades on empty areas */}
+                <GrassDecoration W={W} L={L} beds={beds} features={features} />
+
                 {Array.from({ length: Math.floor(W) - 1 }, (_, i) => (
                   <line key={`v${i}`} x1={i+1} y1={0} x2={i+1} y2={L} className="grid-line" />
                 ))}
@@ -570,6 +914,18 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 <text x={W / 2} y={L + 0.7} className="compass-s">S</text>
                 <text x={W + 0.2} y={L / 2} className="dim-label" dominantBaseline="middle">{L}ft</text>
                 <text x={W / 2} y={-0.85} className="dim-label" textAnchor="middle">{W}ft</text>
+
+                {/* Features (trees, bushes, compost, paths) */}
+                {features.map(feat => (
+                  <FeatureSVG
+                    key={feat.id}
+                    feature={feat}
+                    isSelected={feat.id === selectedFeatureId}
+                    onPointerDown={e => onFeaturePointerDown(e, feat)}
+                  />
+                ))}
+
+                {/* Beds */}
                 {beds.map(bed => {
                   const x = bed.x_ft || 0
                   const y = bed.y_ft || 0
@@ -590,11 +946,29 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                         {bed.name}
                       </text>
                       <BedSwatches bedId={bed.id} layout={bedLayout} bw={bw} bl={bl} />
+                      {/* Resize handle (bottom-right corner) */}
+                      {isSelected && (
+                        <ResizeHandle x={bw} y={bl} onResizeStart={e => onResizeStart(e, 'bed', bed.id)} />
+                      )}
                     </g>
                   )
                 })}
+
+                {/* Feature resize handles */}
+                {selectedFeatureId && (() => {
+                  const f = features.find(ft => ft.id === selectedFeatureId)
+                  if (!f) return null
+                  const fw = f.width_ft || 2, fh = f.length_ft || 2
+                  return (
+                    <g transform={`translate(${f.x_ft || 0},${f.y_ft || 0})`}>
+                      {/* Selection outline */}
+                      <rect width={fw} height={fh} fill="none" stroke="var(--green-600, #16a34a)" strokeWidth={0.06} strokeDasharray="0.2 0.12" rx={0.08} />
+                      <ResizeHandle x={fw} y={fh} onResizeStart={e => onResizeStart(e, 'feature', f.id)} />
+                    </g>
+                  )
+                })()}
               </svg>
-              <div className="canvas-hint">Drag beds to reposition · Click a bed to edit in the panel</div>
+              <div className="canvas-hint">Drag to reposition · Click to select · Drag corner handle to resize</div>
             </div>
           ) : null}
         </div>
@@ -797,6 +1171,34 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                   </button>
                 )
               })()}
+            </div>
+          </div>
+        )}
+
+        {/* ── Feature panel (when a feature is selected, no bed) ── */}
+        {selectedFeature && !selectedBed && (
+          <div className="layout-panel-col">
+            <div className="panel-section">
+              <div className="panel-bed-header">
+                <div>
+                  <span className="paint-title">
+                    {{ tree: '🌳', bush: '🌿', compost: '♻', path: '🟫' }[selectedFeature.type] || ''}
+                    {' '}{selectedFeature.name || selectedFeature.type}
+                  </span>
+                  <span className="paint-subtitle">
+                    {selectedFeature.width_ft} × {selectedFeature.length_ft} ft
+                  </span>
+                </div>
+                <div className="panel-bed-actions">
+                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFeature(selectedFeature.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="panel-section">
+              <div className="panel-section-label">Position &amp; size</div>
+              <p className="feature-hint">Drag on the canvas to move. Drag the corner handle to resize.</p>
             </div>
           </div>
         )}
