@@ -3,14 +3,59 @@ const cors = require('cors');
 const multer = require('multer');
 const webpush = require('web-push');
 const cron = require('node-cron');
+const rateLimit = require('express-rate-limit');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const { chat, chatWithTools } = require('./llm');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Security middleware
+// ---------------------------------------------------------------------------
+
+// CORS — restrict to same-origin in production
+if (process.env.NODE_ENV === 'production') {
+  app.use(cors({ origin: false })); // disallow cross-origin; frontend is served from same origin
+} else {
+  app.use(cors());
+}
+
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'");
+  }
+  next();
+});
+
+// JSON body size limit
+app.use(express.json({ limit: '1mb' }));
+
+// Rate limiting for expensive LLM endpoints
+const llmLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10,
+  message: { error: 'Too many AI requests. Please wait a moment and try again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// General API rate limit
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', apiLimiter);
 
 const DB_PATH = process.env.DB_PATH || './data/garden.db';
 const DATA_DIR = path.resolve(path.dirname(DB_PATH));
@@ -18,6 +63,53 @@ const IMAGES_DIR = path.join(DATA_DIR, 'images');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 const db = new Database(DB_PATH);
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+function safeFilename(filename) {
+  const base = path.basename(filename);
+  if (base !== filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return null;
+  }
+  return base;
+}
+
+function sanitizeCropName(name) {
+  if (!name || typeof name !== 'string') return null;
+  const trimmed = name.trim().slice(0, 100);
+  if (!trimmed) return null;
+  return trimmed;
+}
+
+function sanitizeString(str, maxLen = 500) {
+  if (str == null) return null;
+  if (typeof str !== 'string') return String(str).slice(0, maxLen);
+  return str.trim().slice(0, maxLen);
+}
+
+function validateNumeric(val, min, max, fallback) {
+  const num = Number(val);
+  if (isNaN(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function safeErrorMessage(e) {
+  if (!e) return 'Unknown error';
+  const msg = e.message || String(e);
+  // Strip stack traces and internal paths
+  if (msg.includes('/') || msg.includes('\\') || msg.length > 200) {
+    // Check for known user-facing error patterns
+    if (/no api key/i.test(msg)) return msg;
+    if (/invalid json/i.test(msg)) return 'AI returned an invalid response. Please try again.';
+    if (/rate|limit|429/i.test(msg)) return 'Rate limited. Please wait a moment and try again.';
+    if (/timeout|ETIMEDOUT/i.test(msg)) return 'Request timed out. Please try again.';
+    if (/ECONNREFUSED|ECONNRESET|EAI_AGAIN/i.test(msg)) return 'Connection error. Check your network and API configuration.';
+    return 'An internal error occurred. Please try again.';
+  }
+  return msg;
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -34,7 +126,7 @@ const upload = multer({
   },
 });
 
-app.use('/uploads', express.static(IMAGES_DIR));
+app.use('/uploads', express.static(IMAGES_DIR, { dotfiles: 'deny' }));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS gardens (
@@ -202,7 +294,7 @@ webpush.setVapidDetails(
 function maskKey(key) {
   if (!key) return null;
   if (key.length <= 8) return '****';
-  return key.slice(0, 7) + '****';
+  return key.slice(0, 4) + '…' + key.slice(-4);
 }
 
 function getLLMSettings() {
@@ -340,7 +432,7 @@ app.post('/api/llm-configs/:id/test', async (req, res) => {
     const reply = await chat('Reply with exactly one word: OK', settings, { maxTokens: 16 });
     res.json({ ok: true, response: reply.trim() });
   } catch (e) {
-    res.json({ ok: false, error: e.message });
+    res.json({ ok: false, error: safeErrorMessage(e) });
   }
 });
 
@@ -458,9 +550,10 @@ Reply ONLY with valid JSON, no markdown, no extra text:
   return JSON.parse(raw);
 }
 
-app.post('/api/schedule', async (req, res) => {
+app.post('/api/schedule', llmLimiter, async (req, res) => {
   const { location, crops } = req.body;
   if (!location || !crops?.length) return res.status(400).json({ error: 'Missing location or crops' });
+  if (crops.length > 50) return res.status(400).json({ error: 'Too many crops (max 50)' });
 
   try {
     const BATCH_SIZE = 15;
@@ -473,7 +566,7 @@ app.post('/api/schedule', async (req, res) => {
     res.json({ crops: results.flatMap(r => r.crops) });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -539,9 +632,10 @@ Reply ONLY with valid JSON, no markdown fences, no extra text:
 }
 
 
-app.post('/api/companion', async (req, res) => {
+app.post('/api/companion', llmLimiter, async (req, res) => {
   const { crops } = req.body;
   if (!crops?.length) return res.status(400).json({ error: 'Missing crops' });
+  if (crops.length > 50) return res.status(400).json({ error: 'Too many crops (max 50)' });
 
   // Extend timeout — single call but can take a while for many crops
   req.setTimeout(600000);
@@ -554,7 +648,7 @@ app.post('/api/companion', async (req, res) => {
     res.json(data);
   } catch (e) {
     console.error('Companion analysis error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -593,9 +687,10 @@ app.delete('/api/gardens/:id/companion', (req, res) => {
 // Plant info (AI-generated, cached per crop name)
 // ---------------------------------------------------------------------------
 
-app.post('/api/plants/info', async (req, res) => {
+app.post('/api/plants/info', llmLimiter, async (req, res) => {
   const { crop } = req.body;
   if (!crop?.trim()) return res.status(400).json({ error: 'Missing crop name' });
+  if (crop.length > 100) return res.status(400).json({ error: 'Crop name too long' });
 
   const key = crop.trim().toLowerCase();
 
@@ -631,7 +726,7 @@ Reply ONLY with valid JSON, no markdown, no extra text:
     res.json(data);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -688,8 +783,11 @@ app.post('/api/plantings/:id/journal', upload.single('image'), (req, res) => {
 app.delete('/api/journal/:id', (req, res) => {
   const images = db.prepare('SELECT filename FROM journal_images WHERE journal_entry_id = ?').all(req.params.id);
   for (const img of images) {
-    const filePath = path.join(IMAGES_DIR, img.filename);
-    fs.unlink(filePath, () => {}); // best-effort delete
+    const safe = safeFilename(img.filename);
+    if (safe) {
+      const filePath = path.join(IMAGES_DIR, safe);
+      fs.unlink(filePath, () => {}); // best-effort delete
+    }
   }
   db.prepare('DELETE FROM journal_images WHERE journal_entry_id = ?').run(req.params.id);
   db.prepare('DELETE FROM journal_entries WHERE id = ?').run(req.params.id);
@@ -699,7 +797,8 @@ app.delete('/api/journal/:id', (req, res) => {
 app.delete('/api/journal/images/:id', (req, res) => {
   const img = db.prepare('SELECT filename FROM journal_images WHERE id = ?').get(req.params.id);
   if (!img) return res.status(404).json({ error: 'Not found' });
-  fs.unlink(path.join(IMAGES_DIR, img.filename), () => {});
+  const safe = safeFilename(img.filename);
+  if (safe) fs.unlink(path.join(IMAGES_DIR, safe), () => {});
   db.prepare('DELETE FROM journal_images WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -714,8 +813,12 @@ app.get('/api/gardens', (req, res) => {
 
 app.post('/api/gardens', (req, res) => {
   const { name, zone, zipcode } = req.body;
-  const result = db.prepare('INSERT INTO gardens (name, zone, zipcode) VALUES (?, ?, ?)').run(name, zone, zipcode);
-  res.json({ id: result.lastInsertRowid, name, zone, zipcode });
+  if (!name?.trim()) return res.status(400).json({ error: 'Garden name is required' });
+  const safeName = sanitizeString(name, 100);
+  const safeZone = sanitizeString(zone, 20);
+  const safeZip = sanitizeString(zipcode, 10);
+  const result = db.prepare('INSERT INTO gardens (name, zone, zipcode) VALUES (?, ?, ?)').run(safeName, safeZone, safeZip);
+  res.json({ id: result.lastInsertRowid, name: safeName, zone: safeZone, zipcode: safeZip });
 });
 
 // Must be registered before /:id routes to avoid "reorder" matching :id
@@ -786,8 +889,12 @@ app.get('/api/gardens/:id/beds', (req, res) => {
 
 app.post('/api/gardens/:id/beds', (req, res) => {
   const { name, width_ft, length_ft } = req.body;
-  const result = db.prepare('INSERT INTO beds (garden_id, name, width_ft, length_ft) VALUES (?, ?, ?, ?)').run(req.params.id, name, width_ft, length_ft);
-  res.json({ id: result.lastInsertRowid, name, width_ft: width_ft || 4, length_ft: length_ft || 8 });
+  if (!name?.trim()) return res.status(400).json({ error: 'Bed name is required' });
+  const safeName = sanitizeString(name, 100);
+  const safeW = validateNumeric(width_ft, 1, 100, 4);
+  const safeL = validateNumeric(length_ft, 1, 100, 8);
+  const result = db.prepare('INSERT INTO beds (garden_id, name, width_ft, length_ft) VALUES (?, ?, ?, ?)').run(req.params.id, safeName, safeW, safeL);
+  res.json({ id: result.lastInsertRowid, name: safeName, width_ft: safeW, length_ft: safeL });
 });
 
 app.put('/api/beds/:id', (req, res) => {
@@ -924,7 +1031,7 @@ app.delete('/api/features/:id', (req, res) => {
 // AI fence guidance (soil type, frost line, post depth)
 // ---------------------------------------------------------------------------
 
-app.post('/api/gardens/:id/fence-guidance', async (req, res) => {
+app.post('/api/gardens/:id/fence-guidance', llmLimiter, async (req, res) => {
   const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
   if (!garden) return res.status(404).json({ error: 'Not found' });
   const zipcode = garden.zipcode || req.body.zipcode;
@@ -963,7 +1070,7 @@ Reply ONLY with valid JSON, no markdown fences:
     res.json(data);
   } catch (e) {
     console.error('Fence guidance error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -1005,7 +1112,8 @@ app.post('/api/gardens/:id/layout/bg', upload.single('image'), (req, res) => {
 
   // Delete the previous background image file if one exists
   if (garden.bg_image) {
-    fs.unlink(path.join(IMAGES_DIR, garden.bg_image), () => {});
+    const safe = safeFilename(garden.bg_image);
+    if (safe) fs.unlink(path.join(IMAGES_DIR, safe), () => {});
   }
 
   db.prepare('UPDATE gardens SET bg_image=? WHERE id=?').run(req.file.filename, req.params.id);
@@ -1016,13 +1124,16 @@ app.post('/api/gardens/:id/layout/bg', upload.single('image'), (req, res) => {
 app.delete('/api/gardens/:id/layout/bg', (req, res) => {
   const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
   if (!garden) return res.status(404).json({ error: 'Not found' });
-  if (garden.bg_image) fs.unlink(path.join(IMAGES_DIR, garden.bg_image), () => {});
+  if (garden.bg_image) {
+    const safe = safeFilename(garden.bg_image);
+    if (safe) fs.unlink(path.join(IMAGES_DIR, safe), () => {});
+  }
   db.prepare("UPDATE gardens SET bg_image=NULL WHERE id=?").run(req.params.id);
   res.json({ ok: true });
 });
 
 // AI bed arrangement + crop distribution
-app.post('/api/gardens/:id/layout/suggest', async (req, res) => {
+app.post('/api/gardens/:id/layout/suggest', llmLimiter, async (req, res) => {
   const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
   if (!garden) return res.status(404).json({ error: 'Not found' });
 
@@ -1168,7 +1279,7 @@ Return ONLY valid JSON, no markdown:
     res.json(data);
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -1455,9 +1566,10 @@ app.get('/api/gardens/:id/chat', (req, res) => {
 });
 
 // Send a chat message
-app.post('/api/gardens/:id/chat', async (req, res) => {
+app.post('/api/gardens/:id/chat', llmLimiter, async (req, res) => {
   const { message } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'Empty message' });
+  if (message.length > 2000) return res.status(400).json({ error: 'Message too long (max 2000 characters)' });
 
   const garden = db.prepare('SELECT * FROM gardens WHERE id = ?').get(req.params.id);
   if (!garden) return res.status(404).json({ error: 'Garden not found' });
@@ -1514,7 +1626,7 @@ app.post('/api/gardens/:id/chat', async (req, res) => {
     });
   } catch (e) {
     console.error('Chat error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 

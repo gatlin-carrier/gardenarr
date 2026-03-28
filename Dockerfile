@@ -12,7 +12,11 @@ RUN npm install --production
 COPY backend/ .
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-RUN mkdir -p /data
+RUN mkdir -p /data && \
+    addgroup -S appgroup && adduser -S appuser -G appgroup && \
+    chown -R appuser:appgroup /app /data
+
+USER appuser
 
 ENV NODE_ENV=production
 ENV DB_PATH=/data/garden.db

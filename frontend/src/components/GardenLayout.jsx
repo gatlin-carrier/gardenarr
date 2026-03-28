@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import './GardenLayout.css'
 
 // ─── crop categories (mirrors PlantingList) ──────────────────────────────────
@@ -91,17 +91,31 @@ function BedGrid({ bed, layout, selectedCrop, onCellChange, onCellSelect, select
           const crop = layout[`${row},${col}`]
           const color = crop ? cropColor(crop) : undefined
           const isSelected = selectedCell && selectedCell.row === row && selectedCell.col === col
+
+          // Determine which neighbors share the same crop for visual merging
+          let mergeClasses = ''
+          if (crop) {
+            if (row > 0 && layout[`${row - 1},${col}`] === crop) mergeClasses += ' merge-top'
+            if (row < rows - 1 && layout[`${row + 1},${col}`] === crop) mergeClasses += ' merge-bottom'
+            if (col > 0 && layout[`${row},${col - 1}`] === crop) mergeClasses += ' merge-left'
+            if (col < cols - 1 && layout[`${row},${col + 1}`] === crop) mergeClasses += ' merge-right'
+          }
+
+          // Only show the label on the first cell of a merged group
+          // (the topmost-leftmost cell that has no merge-top and no merge-left)
+          const showLabel = crop && !mergeClasses.includes('merge-top') && !mergeClasses.includes('merge-left')
+
           return (
             <div
               key={`${row}-${col}`}
-              className={`bed-cell ${crop ? 'occupied' : 'empty'}${isSelected ? ' cell-selected' : ''}`}
+              className={`bed-cell ${crop ? 'occupied' : 'empty'}${isSelected ? ' cell-selected' : ''}${mergeClasses}`}
               style={color ? { background: color, borderColor: color } : {}}
               title={crop || (selectedCrop ? `Place ${selectedCrop}` : 'Click to select')}
               onMouseDown={() => handleClick(row, col)}
               onMouseEnter={() => { if (painting.current) applyCell(row, col) }}
               onTouchStart={e => { e.preventDefault(); handleClick(row, col) }}
             >
-              {crop && (
+              {showLabel && (
                 <span className="cell-label">
                   {crop.length > 5 ? crop.slice(0, 4) + '·' : crop}
                 </span>
@@ -140,6 +154,203 @@ function BedSwatches({ bedId, layout, bw, bl }) {
   )
 }
 
+// ─── Grass decoration (scattered blades on empty areas) ────────────────────
+
+function seededRandom(seed) {
+  let s = seed | 0
+  return () => { s = Math.imul(s ^ (s >>> 16), 0x45d9f3b); s = Math.imul(s ^ (s >>> 13), 0x45d9f3b); return ((s ^= s >>> 16) >>> 0) / 4294967296 }
+}
+
+function GrassDecoration({ W, L, beds, features }) {
+  return useMemo(() => {
+    const rand = seededRandom(Math.round(W * 1000 + L * 7))
+    const occupied = []
+    for (const b of beds) {
+      occupied.push({ x: b.x_ft || 0, y: b.y_ft || 0, w: b.width_ft || 4, h: b.length_ft || 8 })
+    }
+    for (const f of features) {
+      occupied.push({ x: f.x_ft || 0, y: f.y_ft || 0, w: f.width_ft || 2, h: f.length_ft || 2 })
+    }
+    function isOccupied(px, py) {
+      for (const r of occupied) {
+        if (px >= r.x - 0.3 && px <= r.x + r.w + 0.3 && py >= r.y - 0.3 && py <= r.y + r.h + 0.3) return true
+      }
+      return false
+    }
+
+    const clumps = []
+    const count = Math.round(W * L * 0.12)
+    for (let i = 0; i < count; i++) {
+      const cx = rand() * W
+      const cy = rand() * L
+      if (isOccupied(cx, cy)) continue
+      const bladeCount = 2 + Math.floor(rand() * 3)
+      const scale = 0.08 + rand() * 0.06
+      const rotation = rand() * 30 - 15
+      clumps.push(
+        <g key={i} transform={`translate(${cx.toFixed(2)},${cy.toFixed(2)}) scale(${scale.toFixed(3)}) rotate(${rotation.toFixed(1)})`} opacity={0.35 + rand() * 0.2}>
+          {Array.from({ length: bladeCount }, (_, j) => {
+            const xOff = (rand() - 0.5) * 3
+            const lean = (rand() - 0.5) * 2
+            const h = 3 + rand() * 4
+            return (
+              <path
+                key={j}
+                d={`M${xOff.toFixed(1)},0 Q${(xOff + lean).toFixed(1)},${(-h * 0.6).toFixed(1)} ${(xOff + lean * 1.5).toFixed(1)},${(-h).toFixed(1)}`}
+                stroke={`hsl(${110 + rand() * 30}, ${50 + rand() * 20}%, ${30 + rand() * 15}%)`}
+                strokeWidth={0.5 + rand() * 0.5}
+                fill="none"
+                strokeLinecap="round"
+              />
+            )
+          })}
+        </g>
+      )
+    }
+    return <g className="grass-deco">{clumps}</g>
+  }, [W, L, beds.length, features.length])
+}
+
+// ─── Feature SVG shapes (symbolic realism) ─────────────────────────────────
+
+function FeatureSVG({ feature, isSelected, onPointerDown }) {
+  const { type, x_ft, y_ft, width_ft, length_ft, name } = feature
+  const w = width_ft || 2
+  const h = length_ft || 2
+
+  let content
+  switch (type) {
+    case 'tree': {
+      const r = Math.min(w, h) / 2
+      const cx = w / 2, cy = h / 2
+      content = (
+        <>
+          {/* trunk */}
+          <rect x={cx - r * 0.15} y={cy + r * 0.1} width={r * 0.3} height={r * 0.6} rx={r * 0.05} fill="#8B6914" opacity={0.85} />
+          {/* canopy shadow */}
+          <ellipse cx={cx + r * 0.08} cy={cy + r * 0.08} rx={r * 0.85} ry={r * 0.75} fill="rgba(0,40,0,0.12)" />
+          {/* main canopy */}
+          <ellipse cx={cx} cy={cy} rx={r * 0.85} ry={r * 0.75} fill="#2d7a2d" />
+          {/* highlight */}
+          <ellipse cx={cx - r * 0.15} cy={cy - r * 0.18} rx={r * 0.5} ry={r * 0.4} fill="#4aad4a" opacity={0.5} />
+          {/* texture dots */}
+          <circle cx={cx + r * 0.25} cy={cy - r * 0.1} r={r * 0.08} fill="#1f5e1f" opacity={0.4} />
+          <circle cx={cx - r * 0.3} cy={cy + r * 0.15} r={r * 0.06} fill="#1f5e1f" opacity={0.3} />
+        </>
+      )
+      break
+    }
+    case 'bush': {
+      const cx = w / 2, cy = h / 2
+      const rx = w * 0.42, ry = h * 0.38
+      content = (
+        <>
+          {/* shadow */}
+          <ellipse cx={cx + 0.05} cy={cy + ry * 0.5} rx={rx * 0.9} ry={ry * 0.3} fill="rgba(0,30,0,0.1)" />
+          {/* base mass */}
+          <ellipse cx={cx} cy={cy} rx={rx} ry={ry} fill="#3a8a3a" />
+          {/* layered lobes */}
+          <ellipse cx={cx - rx * 0.35} cy={cy - ry * 0.15} rx={rx * 0.55} ry={ry * 0.65} fill="#48a048" opacity={0.7} />
+          <ellipse cx={cx + rx * 0.3} cy={cy - ry * 0.1} rx={rx * 0.5} ry={ry * 0.6} fill="#42964a" opacity={0.6} />
+          {/* highlight */}
+          <ellipse cx={cx} cy={cy - ry * 0.3} rx={rx * 0.4} ry={ry * 0.3} fill="#5dbd5d" opacity={0.35} />
+          {/* small berry dots */}
+          <circle cx={cx - rx * 0.2} cy={cy + ry * 0.1} r={0.06} fill="#c44" opacity={0.6} />
+          <circle cx={cx + rx * 0.15} cy={cy - ry * 0.15} r={0.05} fill="#c44" opacity={0.5} />
+        </>
+      )
+      break
+    }
+    case 'compost': {
+      const cx = w / 2, cy = h / 2
+      content = (
+        <>
+          {/* bin body */}
+          <rect x={w * 0.1} y={h * 0.15} width={w * 0.8} height={h * 0.75} rx={0.1} fill="#6B4226" />
+          {/* slats */}
+          <line x1={w * 0.1} y1={h * 0.38} x2={w * 0.9} y2={h * 0.38} stroke="#5a3620" strokeWidth={0.04} />
+          <line x1={w * 0.1} y1={h * 0.58} x2={w * 0.9} y2={h * 0.58} stroke="#5a3620" strokeWidth={0.04} />
+          <line x1={w * 0.1} y1={h * 0.78} x2={w * 0.9} y2={h * 0.78} stroke="#5a3620" strokeWidth={0.04} />
+          {/* compost inside peeking over top */}
+          <ellipse cx={cx} cy={h * 0.18} rx={w * 0.35} ry={h * 0.08} fill="#4a6b20" opacity={0.7} />
+          {/* lid */}
+          <rect x={w * 0.05} y={h * 0.1} width={w * 0.9} height={h * 0.08} rx={0.05} fill="#7a5030" />
+          {/* label */}
+          <text x={cx} y={cy + h * 0.05} textAnchor="middle" dominantBaseline="middle" fontSize={Math.min(w, h) * 0.18} fill="rgba(255,255,255,0.6)" fontWeight="600" pointerEvents="none">&#9851;</text>
+        </>
+      )
+      break
+    }
+    case 'path': {
+      content = (
+        <>
+          {/* gravel/stone path */}
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="#c8b898" />
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="url(#pathPattern)" opacity={0.4} />
+          {/* subtle border */}
+          <rect x={0} y={0} width={w} height={h} rx={0.08} fill="none" stroke="#b0a080" strokeWidth={0.04} />
+        </>
+      )
+      break
+    }
+    default: {
+      content = (
+        <rect x={0} y={0} width={w} height={h} rx={0.1} fill="#aaa" opacity={0.4} stroke="#888" strokeWidth={0.04} />
+      )
+    }
+  }
+
+  return (
+    <g
+      className={`feature-group${isSelected ? ' feature-selected' : ''}`}
+      transform={`translate(${x_ft || 0},${y_ft || 0})`}
+      onMouseDown={onPointerDown}
+      style={{ cursor: 'grab' }}
+    >
+      {content}
+      {name && (
+        <text x={w / 2} y={h + 0.35} className="feature-label" textAnchor="middle" fontSize={0.4} fill="var(--text-muted, #666)" pointerEvents="none">
+          {name}
+        </text>
+      )}
+    </g>
+  )
+}
+
+// ─── SVG pattern defs ──────────────────────────────────────────────────────
+
+function GardenDefs() {
+  return (
+    <defs>
+      <pattern id="pathPattern" width="0.5" height="0.5" patternUnits="userSpaceOnUse">
+        <circle cx="0.15" cy="0.15" r="0.08" fill="#a09070" opacity="0.5" />
+        <circle cx="0.4" cy="0.35" r="0.06" fill="#a09070" opacity="0.4" />
+      </pattern>
+    </defs>
+  )
+}
+
+// ─── Resize handle (corner drag) ───────────────────────────────────────────
+
+function ResizeHandle({ x, y, onResizeStart }) {
+  return (
+    <g className="resize-handle" onMouseDown={onResizeStart} style={{ cursor: 'nwse-resize' }}>
+      {/* invisible hit area */}
+      <rect x={x - 0.3} y={y - 0.3} width={0.6} height={0.6} fill="transparent" />
+      {/* visible triangle */}
+      <path
+        d={`M${x},${y - 0.35} L${x + 0.35},${y} L${x},${y} Z`}
+        fill="var(--green-600, #16a34a)"
+        opacity={0.8}
+        transform={`rotate(180, ${x}, ${y - 0.175})`}
+      />
+      {/* small grip lines */}
+      <line x1={x - 0.05} y1={y} x2={x} y2={y - 0.05} stroke="white" strokeWidth={0.03} />
+      <line x1={x - 0.15} y1={y} x2={x} y2={y - 0.15} stroke="white" strokeWidth={0.03} />
+    </g>
+  )
+}
+
 // ─── GardenLayout (main component) ──────────────────────────────────────────
 
 export default function GardenLayout({ garden: gardenProp, plantings }) {
@@ -161,36 +372,26 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
   const [aiTips, setAiTips]               = useState([])
   const [aiError, setAiError]             = useState('')
   const [bgUploading, setBgUploading]     = useState(false)
-  // Fence & feature state
-  const [activeTool, setActiveTool]               = useState('select')
-  const [fences, setFences]                       = useState([])
-  const [features, setFeatures]                   = useState([])
-  const [drawingFence, setDrawingFence]           = useState([]) // points being drawn
-  const [selectedFenceId, setSelectedFenceId]     = useState(null)
+  const [features, setFeatures]           = useState([])
   const [selectedFeatureId, setSelectedFeatureId] = useState(null)
-  const [fenceGuidance, setFenceGuidance]         = useState(null)
-  const [fenceGuidanceLoading, setFenceGuidanceLoading] = useState(false)
-  const [fenceGuidanceError, setFenceGuidanceError]     = useState('')
-
+  const [showAddFeature, setShowAddFeature]       = useState(false)
   const loadedBeds  = useRef(new Set())
   const svgRef      = useRef(null)
-  const drag        = useRef({ active: false, bedId: null, ox: 0, oy: 0 })
-  const featureDrag = useRef({ active: false, featureId: null, ox: 0, oy: 0 })
+  const drag        = useRef({ active: false, type: null, id: null, ox: 0, oy: 0 })
+  const resize      = useRef({ active: false, type: null, id: null, startW: 0, startH: 0, startX: 0, startY: 0 })
   const bgInputRef  = useRef(null)
 
   const W = garden.layout_width_ft  || 20
   const L = garden.layout_length_ft || 20
   const MARGIN = 1
   const selectedBed = beds.find(b => b.id === selectedBedId) || null
-  const selectedFence = fences.find(f => f.id === selectedFenceId) || null
-  const selectedFeature = features.find(f => f.id === selectedFeatureId) || null
   const activeLayout = layouts[selectedBedId] || {}
   const savedCrops = [...new Set(plantings.map(p => p.crop))]
   const placedCrops = [...new Set(Object.values(activeLayout))]
 
   // ── data loading ──────────────────────────────────────────────────────────
 
-  useEffect(() => { loadBeds(); loadFences(); loadFeatures() }, [garden.id])
+  useEffect(() => { loadBeds(); loadFeatures() }, [garden.id])
 
   async function loadBeds() {
     const data = await fetch(`/api/gardens/${garden.id}/beds`).then(r => r.json())
@@ -199,11 +400,6 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
       setSelectedBedId(data[0].id)
       await loadLayout(data[0].id)
     }
-  }
-
-  async function loadFences() {
-    const data = await fetch(`/api/gardens/${garden.id}/fences`).then(r => r.json())
-    setFences(data)
   }
 
   async function loadFeatures() {
@@ -343,41 +539,160 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     setGarden(g => ({ ...g, bg_image: null }))
   }
 
-  // ── SVG drag ──────────────────────────────────────────────────────────────
+  // ── SVG drag (beds + features) ────────────────────────────────────────────
 
   function onBedPointerDown(e, bed) {
     e.preventDefault()
     e.stopPropagation()
     setSelectedBedId(bed.id)
+    setSelectedFeatureId(null)
     const p = getCanvasPoint(svgRef.current, e)
-    drag.current = { active: true, bedId: bed.id, ox: p.x - (bed.x_ft || 0), oy: p.y - (bed.y_ft || 0) }
+    drag.current = { active: true, type: 'bed', id: bed.id, ox: p.x - (bed.x_ft || 0), oy: p.y - (bed.y_ft || 0) }
+  }
+
+  function onFeaturePointerDown(e, feat) {
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedFeatureId(feat.id)
+    setSelectedBedId(null)
+    const p = getCanvasPoint(svgRef.current, e)
+    drag.current = { active: true, type: 'feature', id: feat.id, ox: p.x - (feat.x_ft || 0), oy: p.y - (feat.y_ft || 0) }
+  }
+
+  function onResizeStart(e, type, id) {
+    e.preventDefault()
+    e.stopPropagation()
+    const p = getCanvasPoint(svgRef.current, e)
+    const item = type === 'bed' ? beds.find(b => b.id === id) : features.find(f => f.id === id)
+    if (!item) return
+    resize.current = {
+      active: true, type, id,
+      startW: item.width_ft || (type === 'bed' ? 4 : 2),
+      startH: item.length_ft || (type === 'bed' ? 8 : 2),
+      startX: p.x, startY: p.y,
+    }
   }
 
   function onSvgMouseMove(e) {
+    // Handle resize
+    if (resize.current.active) {
+      const p = getCanvasPoint(svgRef.current, e)
+      const dx = p.x - resize.current.startX
+      const dy = p.y - resize.current.startY
+      const newW = Math.max(1, Math.round((resize.current.startW + dx) * 2) / 2)
+      const newH = Math.max(1, Math.round((resize.current.startH + dy) * 2) / 2)
+      if (resize.current.type === 'bed') {
+        const clamped = { width_ft: Math.min(newW, 50), length_ft: Math.min(newH, 50) }
+        setBeds(prev => prev.map(b => b.id === resize.current.id ? { ...b, ...clamped } : b))
+      } else {
+        const clamped = { width_ft: Math.min(newW, 50), length_ft: Math.min(newH, 50) }
+        setFeatures(prev => prev.map(f => f.id === resize.current.id ? { ...f, ...clamped } : f))
+      }
+      return
+    }
+
+    // Handle drag
     if (!drag.current.active) return
     const p = getCanvasPoint(svgRef.current, e)
-    const bed = beds.find(b => b.id === drag.current.bedId)
-    if (!bed) return
-    const nx = Math.max(0, Math.min(W - (bed.width_ft || 4), p.x - drag.current.ox))
-    const ny = Math.max(0, Math.min(L - (bed.length_ft || 8), p.y - drag.current.oy))
-    // Round to 0.5ft for snap feel
-    const rx = Math.round(nx * 2) / 2
-    const ry = Math.round(ny * 2) / 2
-    setBeds(prev => prev.map(b => b.id === drag.current.bedId ? { ...b, x_ft: rx, y_ft: ry } : b))
+
+    if (drag.current.type === 'bed') {
+      const bed = beds.find(b => b.id === drag.current.id)
+      if (!bed) return
+      const nx = Math.max(0, Math.min(W - (bed.width_ft || 4), p.x - drag.current.ox))
+      const ny = Math.max(0, Math.min(L - (bed.length_ft || 8), p.y - drag.current.oy))
+      const rx = Math.round(nx * 2) / 2
+      const ry = Math.round(ny * 2) / 2
+      setBeds(prev => prev.map(b => b.id === drag.current.id ? { ...b, x_ft: rx, y_ft: ry } : b))
+    } else if (drag.current.type === 'feature') {
+      const feat = features.find(f => f.id === drag.current.id)
+      if (!feat) return
+      const nx = Math.max(0, Math.min(W - (feat.width_ft || 2), p.x - drag.current.ox))
+      const ny = Math.max(0, Math.min(L - (feat.length_ft || 2), p.y - drag.current.oy))
+      // Free positioning (no grid snap after initial placement)
+      const rx = Math.round(nx * 4) / 4  // quarter-foot precision
+      const ry = Math.round(ny * 4) / 4
+      setFeatures(prev => prev.map(f => f.id === drag.current.id ? { ...f, x_ft: rx, y_ft: ry } : f))
+    }
   }
 
   function onSvgMouseUp() {
+    // Handle resize end
+    if (resize.current.active) {
+      resize.current.active = false
+      if (resize.current.type === 'bed') {
+        const bed = beds.find(b => b.id === resize.current.id)
+        if (bed) {
+          fetch(`/api/beds/${bed.id}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: bed.name, width_ft: bed.width_ft, length_ft: bed.length_ft }),
+          }).catch(console.error)
+        }
+      } else {
+        const feat = features.find(f => f.id === resize.current.id)
+        if (feat) {
+          fetch(`/api/features/${feat.id}`, {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ width_ft: feat.width_ft, length_ft: feat.length_ft }),
+          }).catch(console.error)
+        }
+      }
+      return
+    }
+
     if (!drag.current.active) return
     drag.current.active = false
-    const bed = beds.find(b => b.id === drag.current.bedId)
-    if (bed) {
-      fetch(`/api/beds/${bed.id}/position`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ x_ft: bed.x_ft || 0, y_ft: bed.y_ft || 0 }),
-      }).catch(console.error)
+
+    if (drag.current.type === 'bed') {
+      const bed = beds.find(b => b.id === drag.current.id)
+      if (bed) {
+        fetch(`/api/beds/${bed.id}/position`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ x_ft: bed.x_ft || 0, y_ft: bed.y_ft || 0 }),
+        }).catch(console.error)
+      }
+    } else if (drag.current.type === 'feature') {
+      const feat = features.find(f => f.id === drag.current.id)
+      if (feat) {
+        fetch(`/api/features/${feat.id}/position`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ x_ft: feat.x_ft || 0, y_ft: feat.y_ft || 0 }),
+        }).catch(console.error)
+      }
     }
   }
+
+  // ── Feature CRUD ─────────────────────────────────────────────────────────
+
+  async function addFeature(type) {
+    // Snap to nearest grid position near center
+    const x = Math.round(W / 2)
+    const y = Math.round(L / 2)
+    const defaults = { tree: { w: 3, h: 3 }, bush: { w: 2, h: 2 }, compost: { w: 2, h: 3 }, path: { w: 1, h: 4 } }
+    const d = defaults[type] || { w: 2, h: 2 }
+    const res = await fetch(`/api/gardens/${garden.id}/features`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type, name: type.charAt(0).toUpperCase() + type.slice(1), x_ft: x, y_ft: y, width_ft: d.w, length_ft: d.h }),
+    })
+    const data = await res.json()
+    const newFeature = { id: data.id, type, name: type.charAt(0).toUpperCase() + type.slice(1), x_ft: x, y_ft: y, width_ft: d.w, length_ft: d.h }
+    setFeatures(prev => [...prev, newFeature])
+    setSelectedFeatureId(data.id)
+    setSelectedBedId(null)
+    setShowAddFeature(false)
+  }
+
+  async function deleteFeature(id) {
+    await fetch(`/api/features/${id}`, { method: 'DELETE' })
+    setFeatures(prev => prev.filter(f => f.id !== id))
+    if (selectedFeatureId === id) setSelectedFeatureId(null)
+  }
+
+  const selectedFeature = features.find(f => f.id === selectedFeatureId) || null
 
   // ── AI arrange ────────────────────────────────────────────────────────────
 
@@ -386,230 +701,24 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
     try {
       const data = await fetch(`/api/gardens/${garden.id}/layout/suggest`, { method: 'POST' }).then(r => r.json())
       if (data.error) throw new Error(data.error)
-      // Update bed positions
       setBeds(prev => prev.map(b => {
         const suggestion = data.beds?.find(s => s.id === b.id)
         return suggestion ? { ...b, x_ft: suggestion.x_ft, y_ft: suggestion.y_ft } : b
       }))
       setAiTips(data.tips || [])
-      // Backend already persisted positions and cell assignments,
-      // so reload all bed layouts to pick up new crop placements
-      if (data.cell_assignments?.length) {
-        loadedBeds.current.clear()
-        const layoutUpdates = {}
-        for (const bed of beds) {
-          const cells = await fetch(`/api/beds/${bed.id}/layout`).then(r => r.json())
-          const map = {}
-          for (const c of cells) map[`${c.row},${c.col}`] = c.crop
-          layoutUpdates[bed.id] = map
-          loadedBeds.current.add(bed.id)
-        }
-        setLayouts(prev => ({ ...prev, ...layoutUpdates }))
+      // Persist new positions
+      for (const suggestion of (data.beds || [])) {
+        fetch(`/api/beds/${suggestion.id}/position`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ x_ft: suggestion.x_ft, y_ft: suggestion.y_ft }),
+        }).catch(console.error)
       }
     } catch (e) {
       setAiError(e.message)
     } finally {
       setAiLoading(false)
     }
-  }
-
-  // ── fence drawing ────────────────────────────────────────────────────────
-
-  function onCanvasClick(e) {
-    if (activeTool === 'select') return
-    const p = getCanvasPoint(svgRef.current, e)
-    const x = Math.round(p.x * 2) / 2
-    const y = Math.round(p.y * 2) / 2
-    if (x < 0 || y < 0 || x > W || y > L) return
-
-    if (activeTool === 'fence') {
-      setDrawingFence(prev => [...prev, { x, y }])
-      return
-    }
-
-    // Placement tools
-    const typeMap = { tree: 'tree', bush: 'bush', compost: 'compost', path: 'path' }
-    const type = typeMap[activeTool]
-    if (type) {
-      const defaults = {
-        tree: { width_ft: 3, length_ft: 3, name: 'Tree' },
-        bush: { width_ft: 2, length_ft: 2, name: 'Bush' },
-        compost: { width_ft: 3, length_ft: 3, name: 'Compost' },
-        path: { width_ft: 2, length_ft: 4, name: 'Path' },
-      }[type]
-      placeFeature(type, x, y, defaults)
-    }
-  }
-
-  async function placeFeature(type, x, y, defaults) {
-    const body = { type, name: defaults.name, x_ft: x, y_ft: y, width_ft: defaults.width_ft, length_ft: defaults.length_ft }
-    const res = await fetch(`/api/gardens/${garden.id}/features`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(r => r.json())
-    const feat = { id: res.id, garden_id: garden.id, ...body, metadata: {} }
-    setFeatures(prev => [...prev, feat])
-    setSelectedFeatureId(res.id)
-    setSelectedBedId(null)
-    setSelectedFenceId(null)
-    setActiveTool('select')
-  }
-
-  async function finishFence(close) {
-    const pts = close && drawingFence.length >= 3
-      ? [...drawingFence, drawingFence[0]]
-      : drawingFence
-    if (pts.length < 2) { setDrawingFence([]); return }
-    const body = { name: `Fence ${fences.length + 1}`, fence_type: 'wood', points: pts, post_spacing_ft: 8, closed: close }
-    const res = await fetch(`/api/gardens/${garden.id}/fences`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(r => r.json())
-    setFences(prev => [...prev, { id: res.id, garden_id: garden.id, ...body }])
-    setDrawingFence([])
-    setSelectedFenceId(res.id)
-    setSelectedBedId(null)
-    setSelectedFeatureId(null)
-    setActiveTool('select')
-  }
-
-  function cancelFenceDrawing() {
-    setDrawingFence([])
-    if (activeTool === 'fence') setActiveTool('select')
-  }
-
-  async function updateFence(id, data) {
-    await fetch(`/api/fences/${id}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    setFences(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
-  }
-
-  async function deleteFence(id) {
-    if (!confirm('Delete this fence?')) return
-    await fetch(`/api/fences/${id}`, { method: 'DELETE' })
-    setFences(prev => prev.filter(f => f.id !== id))
-    setSelectedFenceId(null)
-  }
-
-  async function updateFeature(id, data) {
-    await fetch(`/api/features/${id}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    setFeatures(prev => prev.map(f => f.id === id ? { ...f, ...data } : f))
-  }
-
-  async function deleteFeature(id) {
-    if (!confirm('Delete this feature?')) return
-    await fetch(`/api/features/${id}`, { method: 'DELETE' })
-    setFeatures(prev => prev.filter(f => f.id !== id))
-    setSelectedFeatureId(null)
-  }
-
-  // Fence squaring: snap each interior angle to nearest 90 degrees
-  function squareFence(fence) {
-    const pts = [...fence.points]
-    if (pts.length < 3) return
-    // Simple approach: snap each point to align with axis of previous segment
-    const squared = [pts[0]]
-    for (let i = 1; i < pts.length; i++) {
-      const prev = squared[i - 1]
-      const curr = pts[i]
-      const dx = Math.abs(curr.x - prev.x)
-      const dy = Math.abs(curr.y - prev.y)
-      // Snap to horizontal or vertical
-      if (dx > dy) {
-        squared.push({ x: curr.x, y: prev.y })
-      } else {
-        squared.push({ x: prev.x, y: curr.y })
-      }
-    }
-    updateFence(fence.id, { points: squared })
-  }
-
-  // Fence total length & post count
-  function fenceMetrics(fence) {
-    const pts = fence.points || []
-    let totalLen = 0
-    for (let i = 1; i < pts.length; i++) {
-      totalLen += Math.sqrt((pts[i].x - pts[i-1].x) ** 2 + (pts[i].y - pts[i-1].y) ** 2)
-    }
-    const spacing = fence.post_spacing_ft || 8
-    const postCount = Math.max(2, Math.floor(totalLen / spacing) + 1)
-    return { totalLen: Math.round(totalLen * 10) / 10, postCount, spacing }
-  }
-
-  // AI fence guidance
-  async function fetchFenceGuidance() {
-    setFenceGuidanceLoading(true)
-    setFenceGuidanceError('')
-    try {
-      const res = await fetch(`/api/gardens/${garden.id}/fence-guidance`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setFenceGuidance(data)
-    } catch (e) {
-      setFenceGuidanceError(e.message)
-    } finally {
-      setFenceGuidanceLoading(false)
-    }
-  }
-
-  // Feature dragging
-  function onFeaturePointerDown(e, feat) {
-    e.preventDefault()
-    e.stopPropagation()
-    setSelectedFeatureId(feat.id)
-    setSelectedBedId(null)
-    setSelectedFenceId(null)
-    const p = getCanvasPoint(svgRef.current, e)
-    featureDrag.current = { active: true, featureId: feat.id, ox: p.x - (feat.x_ft || 0), oy: p.y - (feat.y_ft || 0) }
-  }
-
-  function onSvgMouseMoveExt(e) {
-    onSvgMouseMove(e)
-    if (!featureDrag.current.active) return
-    const p = getCanvasPoint(svgRef.current, e)
-    const feat = features.find(f => f.id === featureDrag.current.featureId)
-    if (!feat) return
-    const nx = Math.max(0, Math.min(W - (feat.width_ft || 2), p.x - featureDrag.current.ox))
-    const ny = Math.max(0, Math.min(L - (feat.length_ft || 2), p.y - featureDrag.current.oy))
-    const rx = Math.round(nx * 2) / 2
-    const ry = Math.round(ny * 2) / 2
-    setFeatures(prev => prev.map(f => f.id === featureDrag.current.featureId ? { ...f, x_ft: rx, y_ft: ry } : f))
-  }
-
-  function onSvgMouseUpExt() {
-    onSvgMouseUp()
-    if (!featureDrag.current.active) return
-    featureDrag.current.active = false
-    const feat = features.find(f => f.id === featureDrag.current.featureId)
-    if (feat) {
-      fetch(`/api/features/${feat.id}/position`, {
-        method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ x_ft: feat.x_ft || 0, y_ft: feat.y_ft || 0 }),
-      }).catch(console.error)
-    }
-  }
-
-  // ESC key handler for fence drawing
-  useEffect(() => {
-    function onKeyDown(e) {
-      if (e.key === 'Escape') cancelFenceDrawing()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeTool])
-
-  function selectItem(type, id) {
-    setSelectedBedId(type === 'bed' ? id : null)
-    setSelectedFenceId(type === 'fence' ? id : null)
-    setSelectedFeatureId(type === 'feature' ? id : null)
   }
 
   // ── quick-add search ─────────────────────────────────────────────────────
@@ -697,45 +806,25 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
             disabled={aiLoading || beds.length === 0}
             title="Let AI suggest bed positions based on companion planting &amp; sun needs"
           >
-            {aiLoading ? '✨ Arranging & planting…' : '✨ AI arrange & plant'}
+            {aiLoading ? '✨ Arranging…' : '✨ AI arrange'}
           </button>
           <button className="btn-ghost btn-sm" onClick={() => setShowNewBed(v => !v)}>
             + Add bed
           </button>
-        </div>
-      </div>
-
-      {/* ── Tool selector ── */}
-      <div className="tool-selector">
-        {[
-          { id: 'select', label: 'Select', icon: '↖' },
-          { id: 'fence',  label: 'Fence',  icon: '⊞' },
-          { id: 'path',   label: 'Path',   icon: '━' },
-          { id: 'tree',   label: 'Tree',   icon: '🌳' },
-          { id: 'bush',   label: 'Bush',   icon: '🌿' },
-          { id: 'compost',label: 'Compost', icon: '♻' },
-        ].map(tool => (
-          <button
-            key={tool.id}
-            className={`tool-btn ${activeTool === tool.id ? 'active' : ''}`}
-            onClick={() => { setActiveTool(tool.id); if (tool.id !== 'fence') setDrawingFence([]) }}
-            title={tool.label}
-          >
-            <span className="tool-icon">{tool.icon}</span>
-            <span className="tool-label">{tool.label}</span>
-          </button>
-        ))}
-        {drawingFence.length >= 2 && (
-          <>
-            <div className="tool-divider" />
-            <button className="btn-ghost btn-sm" onClick={() => finishFence(false)}>Finish fence</button>
-            {drawingFence.length >= 3 && (
-              <button className="btn-ghost btn-sm" onClick={() => finishFence(true)}>Close loop</button>
+          <div className="feature-add-wrap">
+            <button className="btn-ghost btn-sm" onClick={() => setShowAddFeature(v => !v)}>
+              + Feature
+            </button>
+            {showAddFeature && (
+              <div className="feature-add-menu">
+                <button onClick={() => addFeature('tree')}>🌳 Tree</button>
+                <button onClick={() => addFeature('bush')}>🌿 Bush</button>
+                <button onClick={() => addFeature('compost')}>♻ Compost</button>
+                <button onClick={() => addFeature('path')}>🟫 Path</button>
+              </div>
             )}
-            <button className="btn-ghost btn-sm" onClick={cancelFenceDrawing}>Cancel</button>
-            <span className="tool-hint">{drawingFence.length} posts placed</span>
-          </>
-        )}
+          </div>
+        </div>
       </div>
 
       {/* ── AI tips panel ── */}
@@ -798,18 +887,23 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
               )}
               <svg
                 ref={svgRef}
-                className={`garden-svg${activeTool !== 'select' ? ' tool-active' : ''}`}
+                className="garden-svg"
                 viewBox={`${-MARGIN} ${-MARGIN} ${W + MARGIN * 2} ${L + MARGIN * 2}`}
-                onMouseMove={onSvgMouseMoveExt}
-                onMouseUp={onSvgMouseUpExt}
-                onMouseLeave={onSvgMouseUpExt}
-                onClick={onCanvasClick}
+                onMouseMove={onSvgMouseMove}
+                onMouseUp={onSvgMouseUp}
+                onMouseLeave={onSvgMouseUp}
+                onClick={() => { setSelectedFeatureId(null) }}
               >
+                <GardenDefs />
                 {bgUrl && (
                   <image href={bgUrl} x={0} y={0} width={W} height={L}
                     preserveAspectRatio="xMidYMid slice" className="svg-bg-image" />
                 )}
                 <rect x={0} y={0} width={W} height={L} className="garden-boundary" />
+
+                {/* Grass blades on empty areas */}
+                <GrassDecoration W={W} L={L} beds={beds} features={features} />
+
                 {Array.from({ length: Math.floor(W) - 1 }, (_, i) => (
                   <line key={`v${i}`} x1={i+1} y1={0} x2={i+1} y2={L} className="grid-line" />
                 ))}
@@ -821,81 +915,17 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 <text x={W + 0.2} y={L / 2} className="dim-label" dominantBaseline="middle">{L}ft</text>
                 <text x={W / 2} y={-0.85} className="dim-label" textAnchor="middle">{W}ft</text>
 
-                {/* ── Paths (render first so they're behind beds) ── */}
-                {features.filter(f => f.type === 'path').map(feat => (
-                  <g key={`feat-${feat.id}`}
-                    className={`feature-group feature-path${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
-                    transform={`translate(${feat.x_ft || 0},${feat.y_ft || 0})`}
-                    onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
-                    onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
-                    style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
-                  >
-                    <rect width={feat.width_ft || 2} height={feat.length_ft || 4} className="path-rect" rx={0.08} />
-                    <text x={(feat.width_ft || 2) / 2} y={(feat.length_ft || 4) / 2} className="feature-label" textAnchor="middle" dominantBaseline="middle">
-                      {feat.name || 'Path'}
-                    </text>
-                  </g>
+                {/* Features (trees, bushes, compost, paths) */}
+                {features.map(feat => (
+                  <FeatureSVG
+                    key={feat.id}
+                    feature={feat}
+                    isSelected={feat.id === selectedFeatureId}
+                    onPointerDown={e => onFeaturePointerDown(e, feat)}
+                  />
                 ))}
 
-                {/* ── Fences ── */}
-                {fences.map(fence => {
-                  const pts = fence.points || []
-                  if (pts.length < 2) return null
-                  const pathStr = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')
-                  const isSel = fence.id === selectedFenceId
-                  const spacing = fence.post_spacing_ft || 8
-                  // Calculate intermediate post positions
-                  const posts = []
-                  for (let i = 0; i < pts.length; i++) posts.push(pts[i])
-                  // Add intermediate posts along each segment
-                  const intermediatePosts = []
-                  for (let i = 1; i < pts.length; i++) {
-                    const a = pts[i - 1], b = pts[i]
-                    const segLen = Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2)
-                    const count = Math.floor(segLen / spacing)
-                    for (let j = 1; j <= count; j++) {
-                      const t = (j * spacing) / segLen
-                      if (t < 1) intermediatePosts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
-                    }
-                  }
-                  return (
-                    <g key={`fence-${fence.id}`}
-                      className={`fence-group${isSel ? ' fence-selected' : ''}`}
-                      onClick={e => { e.stopPropagation(); selectItem('fence', fence.id) }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <path d={pathStr} className="fence-line" />
-                      {posts.map((p, i) => (
-                        <circle key={`fp-${i}`} cx={p.x} cy={p.y} r={0.2} className="fence-post" />
-                      ))}
-                      {intermediatePosts.map((p, i) => (
-                        <circle key={`fip-${i}`} cx={p.x} cy={p.y} r={0.12} className="fence-post-minor" />
-                      ))}
-                      {isSel && pts.length >= 2 && (() => {
-                        const mid = pts[Math.floor(pts.length / 2)]
-                        const m = fenceMetrics(fence)
-                        return <text x={mid.x} y={mid.y - 0.5} className="fence-measure" textAnchor="middle">{m.totalLen}ft</text>
-                      })()}
-                    </g>
-                  )
-                })}
-
-                {/* ── Drawing fence preview ── */}
-                {drawingFence.length > 0 && (
-                  <g className="fence-drawing">
-                    {drawingFence.length >= 2 && (
-                      <path
-                        d={drawingFence.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ')}
-                        className="fence-line-preview"
-                      />
-                    )}
-                    {drawingFence.map((p, i) => (
-                      <circle key={i} cx={p.x} cy={p.y} r={0.2} className="fence-post-preview" />
-                    ))}
-                  </g>
-                )}
-
-                {/* ── Beds ── */}
+                {/* Beds */}
                 {beds.map(bed => {
                   const x = bed.x_ft || 0
                   const y = bed.y_ft || 0
@@ -908,218 +938,44 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                       key={bed.id}
                       className={`bed-group${isSelected ? ' bed-selected' : ''}`}
                       transform={`translate(${x},${y})`}
-                      onMouseDown={e => { if (activeTool === 'select') onBedPointerDown(e, bed) }}
-                      onClick={e => { e.stopPropagation(); selectItem('bed', bed.id) }}
-                      style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
+                      onMouseDown={e => onBedPointerDown(e, bed)}
+                      style={{ cursor: 'grab' }}
                     >
                       <rect width={bw} height={bl} className="bed-rect" rx={0.12} />
                       <text x={bw / 2} y={bl / 2 - 0.15} className="bed-label" textAnchor="middle" dominantBaseline="middle">
                         {bed.name}
                       </text>
                       <BedSwatches bedId={bed.id} layout={bedLayout} bw={bw} bl={bl} />
+                      {/* Resize handle (bottom-right corner) */}
+                      {isSelected && (
+                        <ResizeHandle x={bw} y={bl} onResizeStart={e => onResizeStart(e, 'bed', bed.id)} />
+                      )}
                     </g>
                   )
                 })}
 
-                {/* ── Trees & Bushes ── */}
-                {features.filter(f => f.type === 'tree' || f.type === 'bush').map(feat => {
-                  const r = (feat.width_ft || 2) / 2
-                  const cx = (feat.x_ft || 0) + r
-                  const cy = (feat.y_ft || 0) + r
+                {/* Feature resize handles */}
+                {selectedFeatureId && (() => {
+                  const f = features.find(ft => ft.id === selectedFeatureId)
+                  if (!f) return null
+                  const fw = f.width_ft || 2, fh = f.length_ft || 2
                   return (
-                    <g key={`feat-${feat.id}`}
-                      className={`feature-group feature-${feat.type}${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
-                      onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
-                      onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
-                      style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
-                    >
-                      <circle cx={cx} cy={cy} r={r} className={`feature-circle feature-circle-${feat.type}`} />
-                      <text x={cx} y={cy} className="feature-label" textAnchor="middle" dominantBaseline="middle">
-                        {feat.name || feat.type}
-                      </text>
+                    <g transform={`translate(${f.x_ft || 0},${f.y_ft || 0})`}>
+                      {/* Selection outline */}
+                      <rect width={fw} height={fh} fill="none" stroke="var(--green-600, #16a34a)" strokeWidth={0.06} strokeDasharray="0.2 0.12" rx={0.08} />
+                      <ResizeHandle x={fw} y={fh} onResizeStart={e => onResizeStart(e, 'feature', f.id)} />
                     </g>
                   )
-                })}
-
-                {/* ── Compost areas ── */}
-                {features.filter(f => f.type === 'compost').map(feat => (
-                  <g key={`feat-${feat.id}`}
-                    className={`feature-group feature-compost${feat.id === selectedFeatureId ? ' feature-selected' : ''}`}
-                    transform={`translate(${feat.x_ft || 0},${feat.y_ft || 0})`}
-                    onMouseDown={e => { if (activeTool === 'select') onFeaturePointerDown(e, feat) }}
-                    onClick={e => { e.stopPropagation(); selectItem('feature', feat.id) }}
-                    style={{ cursor: activeTool === 'select' ? 'grab' : undefined }}
-                  >
-                    <rect width={feat.width_ft || 3} height={feat.length_ft || 3} className="compost-rect" rx={0.12} />
-                    <text x={(feat.width_ft || 3) / 2} y={(feat.length_ft || 3) / 2} className="feature-label" textAnchor="middle" dominantBaseline="middle">
-                      {feat.name || 'Compost'}
-                    </text>
-                  </g>
-                ))}
+                })()}
               </svg>
-              <div className="canvas-hint">Drag beds to reposition · Click a bed to edit in the panel</div>
+              <div className="canvas-hint">Drag to reposition · Click to select · Drag corner handle to resize</div>
             </div>
           ) : null}
         </div>
 
         {/* ── Right: edit panel ── */}
-        {(selectedBed || selectedFence || selectedFeature) && (
+        {selectedBed && (
           <div className="layout-panel-col">
-
-            {/* ═══ FENCE PANEL ═══ */}
-            {selectedFence && (
-              <>
-                <div className="panel-section">
-                  <div className="panel-bed-header">
-                    <div>
-                      <span className="paint-title">{selectedFence.name}</span>
-                      <span className="paint-subtitle">{selectedFence.fence_type} fence</span>
-                    </div>
-                    <div className="panel-bed-actions">
-                      <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFence(selectedFence.id)}>Delete</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="panel-section">
-                  <div className="panel-section-label">Fence properties</div>
-                  <div className="fence-props-form">
-                    <label className="fence-prop">
-                      <span>Name</span>
-                      <input value={selectedFence.name} onChange={e => updateFence(selectedFence.id, { ...selectedFence, name: e.target.value })} />
-                    </label>
-                    <label className="fence-prop">
-                      <span>Type</span>
-                      <select value={selectedFence.fence_type} onChange={e => updateFence(selectedFence.id, { ...selectedFence, fence_type: e.target.value })}>
-                        <option value="wood">Wood</option>
-                        <option value="wire">Wire/Mesh</option>
-                        <option value="chain_link">Chain Link</option>
-                        <option value="vinyl">Vinyl</option>
-                        <option value="metal">Metal</option>
-                        <option value="split_rail">Split Rail</option>
-                      </select>
-                    </label>
-                    <label className="fence-prop">
-                      <span>Post spacing (ft)</span>
-                      <input type="number" min={2} max={20} step={0.5} value={selectedFence.post_spacing_ft || 8}
-                        onChange={e => updateFence(selectedFence.id, { ...selectedFence, post_spacing_ft: Number(e.target.value) })} />
-                    </label>
-                  </div>
-                </div>
-
-                <div className="panel-section">
-                  <div className="panel-section-label">Materials estimate</div>
-                  {(() => {
-                    const m = fenceMetrics(selectedFence)
-                    return (
-                      <div className="fence-materials">
-                        <div className="fence-material-row"><span>Total length</span><strong>{m.totalLen} ft</strong></div>
-                        <div className="fence-material-row"><span>Corner/end posts</span><strong>{(selectedFence.points || []).length}</strong></div>
-                        <div className="fence-material-row"><span>Total posts ({m.spacing}ft spacing)</span><strong>{m.postCount}</strong></div>
-                        <div className="fence-material-row"><span>Panels/sections</span><strong>{Math.max(0, m.postCount - 1)}</strong></div>
-                      </div>
-                    )
-                  })()}
-                </div>
-
-                <div className="panel-section">
-                  <div className="panel-section-label">Tools</div>
-                  <button className="btn-ghost btn-sm" onClick={() => squareFence(selectedFence)}>
-                    ⊾ Square corners
-                  </button>
-                </div>
-
-                <div className="panel-section">
-                  <div className="panel-section-label">AI fence guidance</div>
-                  {!fenceGuidance && !fenceGuidanceLoading && (
-                    <button className="btn-ghost btn-sm btn-ai" onClick={fetchFenceGuidance}>
-                      ✨ Get soil & post depth guidance
-                    </button>
-                  )}
-                  {fenceGuidanceLoading && <div className="fence-guidance-loading">Analyzing soil conditions...</div>}
-                  {fenceGuidanceError && <div className="ai-error">{fenceGuidanceError}</div>}
-                  {fenceGuidance && (
-                    <div className="fence-guidance">
-                      <div className="fence-guidance-row"><span>Region</span><strong>{fenceGuidance.region_name}</strong></div>
-                      <div className="fence-guidance-row"><span>Soil type</span><strong>{fenceGuidance.soil_type}</strong></div>
-                      {fenceGuidance.soil_notes && <div className="fence-guidance-note">{fenceGuidance.soil_notes}</div>}
-                      <div className="fence-guidance-row"><span>Frost line</span><strong>{fenceGuidance.frost_line_depth_inches}" deep</strong></div>
-                      <div className="fence-guidance-row"><span>Post hole depth</span><strong>{fenceGuidance.recommended_post_hole_depth_inches}"</strong></div>
-                      <div className="fence-guidance-row"><span>Use concrete</span><strong>{fenceGuidance.use_concrete ? 'Yes' : 'No'}</strong></div>
-                      {fenceGuidance.concrete_notes && <div className="fence-guidance-note">{fenceGuidance.concrete_notes}</div>}
-                      <div className="fence-guidance-row"><span>Post diameter</span><strong>{fenceGuidance.post_diameter_inches}"</strong></div>
-                      <div className="fence-guidance-row"><span>Best time to install</span><strong>{fenceGuidance.best_time_to_install}</strong></div>
-                      {fenceGuidance.drainage_notes && <div className="fence-guidance-note">{fenceGuidance.drainage_notes}</div>}
-                      {fenceGuidance.recommendations?.length > 0 && (
-                        <>
-                          <div className="panel-section-label" style={{ marginTop: 8 }}>Recommendations</div>
-                          <ul className="fence-guidance-tips">
-                            {fenceGuidance.recommendations.map((r, i) => <li key={i}>{r}</li>)}
-                          </ul>
-                        </>
-                      )}
-                      <button className="btn-ghost btn-sm" onClick={() => { setFenceGuidance(null); fetchFenceGuidance() }} style={{ marginTop: 6 }}>
-                        Refresh guidance
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* ═══ FEATURE PANEL ═══ */}
-            {selectedFeature && (
-              <>
-                <div className="panel-section">
-                  <div className="panel-bed-header">
-                    <div>
-                      <span className="paint-title">{selectedFeature.name || selectedFeature.type}</span>
-                      <span className="paint-subtitle">{selectedFeature.type} · {selectedFeature.width_ft} × {selectedFeature.length_ft} ft</span>
-                    </div>
-                    <div className="panel-bed-actions">
-                      <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFeature(selectedFeature.id)}>Delete</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="panel-section">
-                  <div className="panel-section-label">Properties</div>
-                  <div className="fence-props-form">
-                    <label className="fence-prop">
-                      <span>Name</span>
-                      <input value={selectedFeature.name || ''} onChange={e => updateFeature(selectedFeature.id, { name: e.target.value })} />
-                    </label>
-                    {selectedFeature.type !== 'path' && (
-                      <label className="fence-prop">
-                        <span>Size (ft)</span>
-                        <input type="number" min={1} max={30} step={0.5} value={selectedFeature.width_ft || 2}
-                          onChange={e => {
-                            const v = Number(e.target.value)
-                            updateFeature(selectedFeature.id, { width_ft: v, length_ft: v })
-                          }} />
-                      </label>
-                    )}
-                    {selectedFeature.type === 'path' && (
-                      <>
-                        <label className="fence-prop">
-                          <span>Width (ft)</span>
-                          <input type="number" min={1} max={30} step={0.5} value={selectedFeature.width_ft || 2}
-                            onChange={e => updateFeature(selectedFeature.id, { width_ft: Number(e.target.value) })} />
-                        </label>
-                        <label className="fence-prop">
-                          <span>Length (ft)</span>
-                          <input type="number" min={1} max={50} step={0.5} value={selectedFeature.length_ft || 4}
-                            onChange={e => updateFeature(selectedFeature.id, { length_ft: Number(e.target.value) })} />
-                        </label>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ═══ BED PANEL ═══ */}
-            {selectedBed && <>
             {/* Bed selector tabs */}
             {beds.length > 1 && (
               <div className="panel-bed-tabs">
@@ -1127,7 +983,7 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                   <button
                     key={b.id}
                     className={`panel-bed-tab ${b.id === selectedBedId ? 'active' : ''}`}
-                    onClick={() => selectItem('bed', b.id)}
+                    onClick={() => setSelectedBedId(b.id)}
                   >
                     {b.name}
                   </button>
@@ -1316,7 +1172,34 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                 )
               })()}
             </div>
-            </>}
+          </div>
+        )}
+
+        {/* ── Feature panel (when a feature is selected, no bed) ── */}
+        {selectedFeature && !selectedBed && (
+          <div className="layout-panel-col">
+            <div className="panel-section">
+              <div className="panel-bed-header">
+                <div>
+                  <span className="paint-title">
+                    {{ tree: '🌳', bush: '🌿', compost: '♻', path: '🟫' }[selectedFeature.type] || ''}
+                    {' '}{selectedFeature.name || selectedFeature.type}
+                  </span>
+                  <span className="paint-subtitle">
+                    {selectedFeature.width_ft} × {selectedFeature.length_ft} ft
+                  </span>
+                </div>
+                <div className="panel-bed-actions">
+                  <button className="btn-ghost btn-sm btn-danger" onClick={() => deleteFeature(selectedFeature.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="panel-section">
+              <div className="panel-section-label">Position &amp; size</div>
+              <p className="feature-hint">Drag on the canvas to move. Drag the corner handle to resize.</p>
+            </div>
           </div>
         )}
       </div>

@@ -262,6 +262,71 @@
   text-align: center;
 }
 
+/* ── Grass decoration ──────────────────────────────────────────── */
+
+.grass-deco { pointer-events: none; }
+
+/* ── Features on canvas ────────────────────────────────────────── */
+
+.feature-group { transition: filter 0.1s; }
+.feature-group:hover { filter: brightness(1.05); }
+.feature-group:active { cursor: grabbing !important; }
+.feature-selected { filter: drop-shadow(0 0 0.15px rgba(34,197,94,0.6)); }
+
+.feature-label {
+  font-size: 0.4px;
+  fill: var(--text-muted, #666);
+  pointer-events: none;
+}
+
+/* ── Resize handle ─────────────────────────────────────────────── */
+
+.resize-handle { opacity: 0.7; transition: opacity 0.15s; }
+.resize-handle:hover { opacity: 1; }
+
+/* ── Feature add dropdown ──────────────────────────────────────── */
+
+.feature-add-wrap { position: relative; }
+
+.feature-add-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  background: var(--bg, white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 130px;
+}
+
+.feature-add-menu button {
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.feature-add-menu button:hover {
+  background: var(--green-50, #f0fdf4);
+}
+
+/* ── Feature info panel ────────────────────────────────────────── */
+
+.feature-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
 /* ── Split layout: canvas + panel ──────────────────────────────── */
 
 .layout-split {
@@ -671,6 +736,24 @@
   z-index: 1;
   position: relative;
 }
+
+/* ── Merge adjacent same-crop cells ────────────────────────────── */
+
+.bed-cell.occupied.merge-top    { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -2px; padding-top: 2px; }
+.bed-cell.occupied.merge-bottom { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: -2px; padding-bottom: 2px; }
+.bed-cell.occupied.merge-left   { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -2px; padding-left: 2px; }
+.bed-cell.occupied.merge-right  { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -2px; padding-right: 2px; }
+
+.bed-cell.occupied.merge-top,
+.bed-cell.occupied.merge-bottom,
+.bed-cell.occupied.merge-left,
+.bed-cell.occupied.merge-right {
+  position: relative;
+  z-index: 1;
+}
+
+/* Remove bottom shadow on cells that merge downward */
+.bed-cell.occupied.merge-bottom { box-shadow: none; }
 
 .cell-label {
   font-size: 9px;

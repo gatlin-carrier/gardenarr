@@ -14,3 +14,15 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
