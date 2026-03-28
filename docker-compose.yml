@@ -11,3 +11,18 @@ services:
       - NODE_ENV=production
       - DB_PATH=/data/garden.db
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
