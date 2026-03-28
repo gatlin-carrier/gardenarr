@@ -91,17 +91,31 @@ function BedGrid({ bed, layout, selectedCrop, onCellChange, onCellSelect, select
           const crop = layout[`${row},${col}`]
           const color = crop ? cropColor(crop) : undefined
           const isSelected = selectedCell && selectedCell.row === row && selectedCell.col === col
+
+          // Determine which neighbors share the same crop for visual merging
+          let mergeClasses = ''
+          if (crop) {
+            if (row > 0 && layout[`${row - 1},${col}`] === crop) mergeClasses += ' merge-top'
+            if (row < rows - 1 && layout[`${row + 1},${col}`] === crop) mergeClasses += ' merge-bottom'
+            if (col > 0 && layout[`${row},${col - 1}`] === crop) mergeClasses += ' merge-left'
+            if (col < cols - 1 && layout[`${row},${col + 1}`] === crop) mergeClasses += ' merge-right'
+          }
+
+          // Only show the label on the first cell of a merged group
+          // (the topmost-leftmost cell that has no merge-top and no merge-left)
+          const showLabel = crop && !mergeClasses.includes('merge-top') && !mergeClasses.includes('merge-left')
+
           return (
             <div
               key={`${row}-${col}`}
-              className={`bed-cell ${crop ? 'occupied' : 'empty'}${isSelected ? ' cell-selected' : ''}`}
+              className={`bed-cell ${crop ? 'occupied' : 'empty'}${isSelected ? ' cell-selected' : ''}${mergeClasses}`}
               style={color ? { background: color, borderColor: color } : {}}
               title={crop || (selectedCrop ? `Place ${selectedCrop}` : 'Click to select')}
               onMouseDown={() => handleClick(row, col)}
               onMouseEnter={() => { if (painting.current) applyCell(row, col) }}
               onTouchStart={e => { e.preventDefault(); handleClick(row, col) }}
             >
-              {crop && (
+              {showLabel && (
                 <span className="cell-label">
                   {crop.length > 5 ? crop.slice(0, 4) + '·' : crop}
                 </span>

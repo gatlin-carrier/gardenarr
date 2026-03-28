@@ -672,6 +672,24 @@
   position: relative;
 }
 
+/* ── Merge adjacent same-crop cells ────────────────────────────── */
+
+.bed-cell.occupied.merge-top    { border-top-left-radius: 0; border-top-right-radius: 0; margin-top: -2px; padding-top: 2px; }
+.bed-cell.occupied.merge-bottom { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: -2px; padding-bottom: 2px; }
+.bed-cell.occupied.merge-left   { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -2px; padding-left: 2px; }
+.bed-cell.occupied.merge-right  { border-top-right-radius: 0; border-bottom-right-radius: 0; margin-right: -2px; padding-right: 2px; }
+
+.bed-cell.occupied.merge-top,
+.bed-cell.occupied.merge-bottom,
+.bed-cell.occupied.merge-left,
+.bed-cell.occupied.merge-right {
+  position: relative;
+  z-index: 1;
+}
+
+/* Remove bottom shadow on cells that merge downward */
+.bed-cell.occupied.merge-bottom { box-shadow: none; }
+
 .cell-label {
   font-size: 9px;
   font-weight: 600;
