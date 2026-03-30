@@ -134,6 +134,7 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
   const [draft, setDraft]         = useState({})
   const [saving, setSaving]       = useState(false)
   const [activeCategory, setActiveCategory] = useState(null)
+  const [statusFilter, setStatusFilter]     = useState(null) // 'in_progress' | 'completed' | 'skipped' | null
   const [showAddForm, setShowAddForm] = useState(false)
   const [addDraft, setAddDraft]   = useState({ crop: '', sow_indoors: '', transplant_or_direct_sow: '', harvest: '', tip: '', notes: '' })
   const [bulkGuide, setBulkGuide] = useState({ loading: false, done: 0, total: 0, errors: [] })
@@ -146,9 +147,28 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
   }
   const presentCategories = CATEGORIES.filter(c => categoryCounts[c.id])
 
-  const visible = activeCategory
-    ? plantings.filter(p => getCategory(p.crop) === activeCategory)
-    : plantings
+  function getPlantingStatus(p) {
+    if (p.status_skipped) return 'skipped'
+    if (p.status_harvested) return 'completed'
+    if (p.status_transplanted || p.status_planted) return 'in_progress'
+    return 'not_started'
+  }
+
+  // Status filter counts
+  const statusCounts = { in_progress: 0, completed: 0, skipped: 0 }
+  for (const p of plantings) {
+    const s = getPlantingStatus(p)
+    if (s === 'in_progress') statusCounts.in_progress++
+    else if (s === 'completed') statusCounts.completed++
+    else if (s === 'skipped') statusCounts.skipped++
+  }
+
+  let visible = plantings
+  if (activeCategory) visible = visible.filter(p => getCategory(p.crop) === activeCategory)
+  if (statusFilter === 'in_progress') visible = visible.filter(p => { const s = getPlantingStatus(p); return s === 'in_progress' })
+  else if (statusFilter === 'completed') visible = visible.filter(p => getPlantingStatus(p) === 'completed')
+  else if (statusFilter === 'skipped') visible = visible.filter(p => getPlantingStatus(p) === 'skipped')
+  else if (statusFilter === 'todo') visible = visible.filter(p => getPlantingStatus(p) === 'not_started')
 
   function startEdit(p) {
     setEditingId(p.id)
@@ -325,6 +345,43 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
         </div>
       )}
 
+      {/* Status filter bar */}
+      <div className="pl-filter-bar pl-status-filter">
+        <button
+          className={`pl-filter-pill ${statusFilter === null ? 'active' : ''}`}
+          onClick={() => setStatusFilter(null)}
+        >
+          All
+        </button>
+        <button
+          className={`pl-filter-pill pl-pill-todo ${statusFilter === 'todo' ? 'active' : ''}`}
+          onClick={() => setStatusFilter(prev => prev === 'todo' ? null : 'todo')}
+        >
+          To do
+        </button>
+        <button
+          className={`pl-filter-pill pl-pill-progress ${statusFilter === 'in_progress' ? 'active' : ''}`}
+          onClick={() => setStatusFilter(prev => prev === 'in_progress' ? null : 'in_progress')}
+        >
+          In progress
+          {statusCounts.in_progress > 0 && <span className="pill-count">{statusCounts.in_progress}</span>}
+        </button>
+        <button
+          className={`pl-filter-pill pl-pill-done ${statusFilter === 'completed' ? 'active' : ''}`}
+          onClick={() => setStatusFilter(prev => prev === 'completed' ? null : 'completed')}
+        >
+          Harvested
+          {statusCounts.completed > 0 && <span className="pill-count">{statusCounts.completed}</span>}
+        </button>
+        <button
+          className={`pl-filter-pill pl-pill-skipped ${statusFilter === 'skipped' ? 'active' : ''}`}
+          onClick={() => setStatusFilter(prev => prev === 'skipped' ? null : 'skipped')}
+        >
+          Skipped
+          {statusCounts.skipped > 0 && <span className="pill-count">{statusCounts.skipped}</span>}
+        </button>
+      </div>
+
       {/* Cards */}
       <div className="planting-cards">
         {visible.map(p => {
@@ -390,55 +447,63 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
                 </div>
               </div>
 
-              {/* Timeline */}
-              <div className="pc-timeline">
-                {p.sow_indoors && (
-                  <div className="pc-tl-step">
-                    <span className="pc-tl-icon">🌱</span>
+              {/* Timeline with inline checkmarks */}
+              <div className={`pc-timeline${p.status_skipped ? ' pc-timeline-skipped' : ''}`}>
+                <div className="pc-tl-steps">
+                  {p.sow_indoors && (
+                    <div className={`pc-tl-step${p.status_planted ? ' step-done' : ''}`}>
+                      <button
+                        className={`pc-tl-check${p.status_planted ? ' checked' : ''}`}
+                        onClick={() => toggleStatus(p, 'status_planted')}
+                        title={p.status_planted ? 'Mark as not done' : 'Mark as done'}
+                      >
+                        {p.status_planted ? '✓' : ''}
+                      </button>
+                      <span className="pc-tl-icon">🌱</span>
+                      <div className="pc-tl-body">
+                        <span className="pc-tl-label">Sow indoors</span>
+                        <span className="pc-tl-date">{p.sow_indoors}</span>
+                      </div>
+                    </div>
+                  )}
+                  {p.sow_indoors && <span className="pc-tl-arrow">→</span>}
+                  <div className={`pc-tl-step${p.status_transplanted ? ' step-done' : ''}`}>
+                    <button
+                      className={`pc-tl-check${p.status_transplanted ? ' checked' : ''}`}
+                      onClick={() => toggleStatus(p, 'status_transplanted')}
+                      title={p.status_transplanted ? 'Mark as not done' : 'Mark as done'}
+                    >
+                      {p.status_transplanted ? '✓' : ''}
+                    </button>
+                    <span className="pc-tl-icon">{p.sow_indoors ? '🌿' : '🌱'}</span>
                     <div className="pc-tl-body">
-                      <span className="pc-tl-label">Sow indoors</span>
-                      <span className="pc-tl-date">{p.sow_indoors}</span>
+                      <span className="pc-tl-label">{p.sow_indoors ? 'Transplant' : 'Direct sow'}</span>
+                      <span className="pc-tl-date">{p.transplant_or_direct_sow}</span>
                     </div>
                   </div>
-                )}
-                {p.sow_indoors && <span className="pc-tl-arrow">→</span>}
-                <div className="pc-tl-step">
-                  <span className="pc-tl-icon">{p.sow_indoors ? '🌿' : '🌱'}</span>
-                  <div className="pc-tl-body">
-                    <span className="pc-tl-label">{p.sow_indoors ? 'Transplant' : 'Direct sow'}</span>
-                    <span className="pc-tl-date">{p.transplant_or_direct_sow}</span>
+                  <span className="pc-tl-arrow">→</span>
+                  <div className={`pc-tl-step${p.status_harvested ? ' step-done' : ''}`}>
+                    <button
+                      className={`pc-tl-check${p.status_harvested ? ' checked' : ''}`}
+                      onClick={() => toggleStatus(p, 'status_harvested')}
+                      title={p.status_harvested ? 'Mark as not done' : 'Mark as done'}
+                    >
+                      {p.status_harvested ? '✓' : ''}
+                    </button>
+                    <span className="pc-tl-icon">🌾</span>
+                    <div className="pc-tl-body">
+                      <span className="pc-tl-label">Harvest</span>
+                      <span className="pc-tl-date">{p.harvest}</span>
+                    </div>
                   </div>
                 </div>
-                <span className="pc-tl-arrow">→</span>
-                <div className="pc-tl-step">
-                  <span className="pc-tl-icon">🌾</span>
-                  <div className="pc-tl-body">
-                    <span className="pc-tl-label">Harvest</span>
-                    <span className="pc-tl-date">{p.harvest}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status checkboxes */}
-              <div className="pc-status">
-                {p.sow_indoors && (
-                  <label className={`pc-status-check ${p.status_planted ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={!!p.status_planted} onChange={() => toggleStatus(p, 'status_planted')} />
-                    <span>Planted</span>
-                  </label>
-                )}
-                <label className={`pc-status-check ${p.status_transplanted ? 'checked' : ''}`}>
-                  <input type="checkbox" checked={!!p.status_transplanted} onChange={() => toggleStatus(p, 'status_transplanted')} />
-                  <span>{p.sow_indoors ? 'Transplanted' : 'Planted'}</span>
-                </label>
-                <label className={`pc-status-check ${p.status_harvested ? 'checked' : ''}`}>
-                  <input type="checkbox" checked={!!p.status_harvested} onChange={() => toggleStatus(p, 'status_harvested')} />
-                  <span>Harvested</span>
-                </label>
-                <label className={`pc-status-check skipped ${p.status_skipped ? 'checked' : ''}`}>
-                  <input type="checkbox" checked={!!p.status_skipped} onChange={() => toggleStatus(p, 'status_skipped')} />
-                  <span>Not this season</span>
-                </label>
+                <button
+                  className={`pc-skip-btn${p.status_skipped ? ' active' : ''}`}
+                  onClick={() => toggleStatus(p, 'status_skipped')}
+                  title={p.status_skipped ? 'Undo skip' : 'Did not plant'}
+                >
+                  {p.status_skipped ? '✕ Skipped' : '✕ Did Not Plant'}
+                </button>
               </div>
 
               {/* Tip */}
@@ -456,7 +521,9 @@ export default function PlantingList({ plantings, onUpdate, onDelete, onAdd }) {
 
         {visible.length === 0 && (
           <div className="pl-empty-filter">
-            No {CAT_BY_ID[activeCategory]?.label.toLowerCase()} saved yet.
+            {statusFilter
+              ? `No ${statusFilter === 'todo' ? 'to-do' : statusFilter === 'in_progress' ? 'in-progress' : statusFilter} plantings${activeCategory ? ` in ${CAT_BY_ID[activeCategory]?.label.toLowerCase()}` : ''}.`
+              : `No ${activeCategory ? CAT_BY_ID[activeCategory]?.label.toLowerCase() : 'plantings'} saved yet.`}
           </div>
         )}
       </div>

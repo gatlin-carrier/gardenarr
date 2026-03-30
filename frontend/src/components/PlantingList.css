@@ -169,18 +169,66 @@
 
 .pc-timeline {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px;
   background: var(--bg);
   border-radius: var(--radius-sm);
 }
 
-.pc-tl-step {
+.pc-timeline-skipped {
+  opacity: 0.5;
+}
+
+.pc-tl-steps {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.pc-tl-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.pc-tl-step.step-done .pc-tl-label,
+.pc-tl-step.step-done .pc-tl-date {
+  color: var(--green-700, #3d7225);
+}
+
+/* Inline checkmark circle */
+.pc-tl-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg, white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: all 0.15s;
+  padding: 0;
+  line-height: 1;
+}
+
+.pc-tl-check:hover {
+  border-color: var(--green-400);
+  background: var(--green-50);
+}
+
+.pc-tl-check.checked {
+  background: var(--green-600, #16a34a);
+  border-color: var(--green-600, #16a34a);
+  color: white;
 }
 
 .pc-tl-icon {
@@ -201,12 +249,14 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  transition: color 0.15s;
 }
 
 .pc-tl-date {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  transition: color 0.15s;
 }
 
 .pc-tl-arrow {
@@ -215,6 +265,34 @@
   align-self: center;
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+/* Did Not Plant button */
+.pc-skip-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.pc-skip-btn:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.pc-skip-btn.active {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+  font-weight: 600;
 }
 
 /* ── Add plant bar ─────────────────────────────────────────────── */
@@ -268,60 +346,16 @@
   border-left-color: var(--green-400);
 }
 
-/* ── Status checkboxes ─────────────────────────────────────────── */
+/* ── Status filter pills ───────────────────────────────────────── */
 
-.pc-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 0 2px;
+.pl-status-filter {
+  gap: 6px;
 }
 
-.pc-status-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-  user-select: none;
-}
-
-.pc-status-check input[type="checkbox"] {
-  accent-color: var(--green-600);
-  margin: 0;
-  cursor: pointer;
-}
-
-.pc-status-check:hover {
-  border-color: var(--green-400);
-  background: var(--green-50);
-}
-
-.pc-status-check.checked {
-  background: var(--green-50);
-  border-color: var(--green-400);
-  color: var(--green-800);
-}
-
-.pc-status-check.skipped.checked {
-  background: #fef2f2;
-  border-color: #fecaca;
-  color: #dc2626;
-}
-
-.pc-status-check.skipped:hover {
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-
-.pc-status-check.skipped input[type="checkbox"] {
-  accent-color: #dc2626;
-}
+.pl-pill-progress.active { --pill-color: #2563eb; border-color: #93c5fd; background: #eff6ff; color: #2563eb; }
+.pl-pill-done.active { --pill-color: #16a34a; border-color: var(--green-400); background: var(--green-50); color: var(--green-700); }
+.pl-pill-skipped.active { --pill-color: #dc2626; border-color: #fecaca; background: #fef2f2; color: #dc2626; }
+.pl-pill-todo.active { --pill-color: #6b7280; border-color: #d1d5db; background: #f9fafb; color: #374151; }
 
 /* ── Tip & notes ────────────────────────────────────────────────── */
 
@@ -430,7 +464,9 @@
 /* ── Responsive ─────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
-  .pc-timeline { gap: 8px; }
+  .pc-timeline { flex-direction: column; align-items: stretch; gap: 8px; }
+  .pc-tl-steps { gap: 8px; }
   .pc-tl-arrow { display: none; }
+  .pc-skip-btn { align-self: flex-start; }
   .edit-row { flex-direction: column; }
 }
