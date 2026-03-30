@@ -199,20 +199,20 @@
 }
 
 .garden-boundary {
-  fill: #f0fdf4;
-  stroke: var(--green-600, #16a34a);
+  fill: #4a8c3f;
+  stroke: #3d7a34;
   stroke-width: 0.08;
 }
 
 .grid-line {
-  stroke: rgba(0, 80, 20, 0.08);
+  stroke: rgba(0, 0, 0, 0.06);
   stroke-width: 0.03;
 }
 
 .compass-n, .compass-s {
   font-size: 0.7px;
   font-weight: 700;
-  fill: var(--text-muted);
+  fill: rgba(255,255,255,0.6);
   text-anchor: middle;
   dominant-baseline: middle;
   letter-spacing: 0.05px;
@@ -221,36 +221,31 @@
 
 .dim-label {
   font-size: 0.55px;
-  fill: var(--text-muted);
+  fill: rgba(255,255,255,0.5);
   pointer-events: none;
 }
 
 /* Bed rects */
 .bed-group { transition: filter 0.1s; }
-.bed-group:hover .bed-rect { filter: brightness(0.95); }
+.bed-group:hover { filter: brightness(1.05); }
 .bed-group:active { cursor: grabbing !important; }
 
-.bed-rect {
-  fill: rgba(134, 197, 118, 0.35);
-  stroke: var(--green-600, #16a34a);
-  stroke-width: 0.07;
-  transition: fill 0.15s, stroke 0.15s;
+.bed-soil {
+  transition: opacity 0.15s;
 }
 
-.bed-selected .bed-rect {
-  fill: rgba(34, 197, 94, 0.25);
-  stroke: var(--green-700, #15803d);
-  stroke-width: 0.1;
-  filter: drop-shadow(0 0 0.2px rgba(34,197,94,0.5));
+.bed-select-ring {
+  filter: drop-shadow(0 0 0.3px rgba(34,197,94,0.6));
 }
 
 .bed-label {
   font-size: 0.55px;
   font-weight: 600;
-  fill: var(--green-900, #14532d);
+  fill: rgba(255, 255, 255, 0.9);
   pointer-events: none;
   dominant-baseline: middle;
   text-anchor: middle;
+  text-shadow: 0 0.04px 0.08px rgba(0,0,0,0.5);
 }
 
 .canvas-hint {
@@ -275,7 +270,7 @@
 
 .feature-label {
   font-size: 0.4px;
-  fill: var(--text-muted, #666);
+  fill: rgba(255,255,255,0.7);
   pointer-events: none;
 }
 

@@ -134,20 +134,24 @@ function BedSwatches({ bedId, layout, bw, bl }) {
   const crops = Object.entries(layout)
   if (!crops.length) return null
   const unique = [...new Set(crops.map(([, c]) => c))]
-  const sw = Math.min(bw / unique.length, bl * 0.35, 0.6)
-  const startX = bw / 2 - (unique.length * (sw + 0.08)) / 2
+  const sw = Math.min((bw - 0.6) / unique.length, bl * 0.3, 0.55)
+  const gap = 0.08
+  const totalW = unique.length * sw + (unique.length - 1) * gap
+  const startX = bw / 2 - totalW / 2
   return (
     <g>
       {unique.map((crop, i) => (
         <rect
           key={crop}
-          x={startX + i * (sw + 0.08)}
-          y={bl - sw - 0.25}
+          x={startX + i * (sw + gap)}
+          y={bl - sw - 0.35}
           width={sw}
           height={sw}
           fill={cropColor(crop)}
-          rx={0.08}
-          opacity={0.85}
+          rx={0.06}
+          opacity={0.9}
+          stroke="rgba(0,0,0,0.15)"
+          strokeWidth={0.02}
         />
       ))}
     </g>
@@ -188,7 +192,7 @@ function GrassDecoration({ W, L, beds, features }) {
       const scale = 0.08 + rand() * 0.06
       const rotation = rand() * 30 - 15
       clumps.push(
-        <g key={i} transform={`translate(${cx.toFixed(2)},${cy.toFixed(2)}) scale(${scale.toFixed(3)}) rotate(${rotation.toFixed(1)})`} opacity={0.35 + rand() * 0.2}>
+        <g key={i} transform={`translate(${cx.toFixed(2)},${cy.toFixed(2)}) scale(${scale.toFixed(3)}) rotate(${rotation.toFixed(1)})`} opacity={0.4 + rand() * 0.25}>
           {Array.from({ length: bladeCount }, (_, j) => {
             const xOff = (rand() - 0.5) * 3
             const lean = (rand() - 0.5) * 2
@@ -197,7 +201,7 @@ function GrassDecoration({ W, L, beds, features }) {
               <path
                 key={j}
                 d={`M${xOff.toFixed(1)},0 Q${(xOff + lean).toFixed(1)},${(-h * 0.6).toFixed(1)} ${(xOff + lean * 1.5).toFixed(1)},${(-h).toFixed(1)}`}
-                stroke={`hsl(${110 + rand() * 30}, ${50 + rand() * 20}%, ${30 + rand() * 15}%)`}
+                stroke={`hsl(${105 + rand() * 30}, ${45 + rand() * 25}%, ${38 + rand() * 20}%)`}
                 strokeWidth={0.5 + rand() * 0.5}
                 fill="none"
                 strokeLinecap="round"
@@ -325,6 +329,22 @@ function GardenDefs() {
       <pattern id="pathPattern" width="0.5" height="0.5" patternUnits="userSpaceOnUse">
         <circle cx="0.15" cy="0.15" r="0.08" fill="#a09070" opacity="0.5" />
         <circle cx="0.4" cy="0.35" r="0.06" fill="#a09070" opacity="0.4" />
+      </pattern>
+      {/* Wood grain for bed frames */}
+      <pattern id="woodGrain" width="1" height="0.3" patternUnits="userSpaceOnUse">
+        <rect width="1" height="0.3" fill="#8B6B3E" />
+        <line x1="0" y1="0.06" x2="1" y2="0.06" stroke="#7a5d35" strokeWidth="0.01" opacity="0.5" />
+        <line x1="0" y1="0.15" x2="1" y2="0.15" stroke="#7a5d35" strokeWidth="0.008" opacity="0.35" />
+        <line x1="0" y1="0.22" x2="1" y2="0.23" stroke="#7a5d35" strokeWidth="0.01" opacity="0.4" />
+      </pattern>
+      {/* Soil texture for bed interior */}
+      <pattern id="soilTexture" width="0.8" height="0.8" patternUnits="userSpaceOnUse">
+        <rect width="0.8" height="0.8" fill="#4a3928" />
+        <circle cx="0.15" cy="0.2" r="0.03" fill="#3d2f1f" opacity="0.5" />
+        <circle cx="0.55" cy="0.1" r="0.025" fill="#554432" opacity="0.4" />
+        <circle cx="0.35" cy="0.55" r="0.02" fill="#3d2f1f" opacity="0.3" />
+        <circle cx="0.7" cy="0.6" r="0.03" fill="#554432" opacity="0.35" />
+        <circle cx="0.1" cy="0.7" r="0.015" fill="#3d2f1f" opacity="0.25" />
       </pattern>
     </defs>
   )
@@ -941,7 +961,18 @@ export default function GardenLayout({ garden: gardenProp, plantings }) {
                       onMouseDown={e => onBedPointerDown(e, bed)}
                       style={{ cursor: 'grab' }}
                     >
-                      <rect width={bw} height={bl} className="bed-rect" rx={0.12} />
+                      {/* Drop shadow */}
+                      <rect x={0.08} y={0.08} width={bw} height={bl} rx={0.12} fill="rgba(0,0,0,0.15)" />
+                      {/* Wood frame (outer) */}
+                      <rect width={bw} height={bl} rx={0.12} fill="url(#woodGrain)" stroke="#6b5530" strokeWidth={0.06} />
+                      {/* Wood frame highlight (top/left edge) */}
+                      <rect x={0.03} y={0.03} width={bw - 0.06} height={bl - 0.06} rx={0.1} fill="none" stroke="rgba(255,220,160,0.2)" strokeWidth={0.03} />
+                      {/* Soil interior */}
+                      <rect className="bed-soil" x={0.2} y={0.2} width={bw - 0.4} height={bl - 0.4} rx={0.06} fill="url(#soilTexture)" />
+                      {/* Selection glow */}
+                      {isSelected && (
+                        <rect width={bw} height={bl} rx={0.12} fill="none" stroke="rgba(34,197,94,0.7)" strokeWidth={0.1} className="bed-select-ring" />
+                      )}
                       <text x={bw / 2} y={bl / 2 - 0.15} className="bed-label" textAnchor="middle" dominantBaseline="middle">
                         {bed.name}
                       </text>
